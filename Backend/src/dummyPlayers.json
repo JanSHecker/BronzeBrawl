@@ -1,0 +1,38 @@
+{
+  "teams": [
+    [
+      {
+        "playerName": "KnechtA"
+      },
+      {
+        "playerName": "KnechtB"
+      },
+      {
+        "playerName": "KnechtC"
+      },
+      {
+        "playerName": "KnechtD"
+      },
+      {
+        "playerName": "KnechtE"
+      }
+    ],
+    [
+      {
+        "playerName": "KnechtZ"
+      },
+      {
+        "playerName": "KnechtY"
+      },
+      {
+        "playerName": "KnechtX"
+      },
+      {
+        "playerName": "KnechtW"
+      },
+      {
+        "playerName": "KnechtV"
+      }
+    ]
+  ]
+}

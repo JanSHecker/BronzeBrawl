@@ -1,68 +1,54 @@
-# === Node.js / Backend ===
-node_modules/
-dist/
-build/
-.env
-.env.local
-.env.*.local
-npm-debug.log*
-yarn-debug.log*
-pnpm-debug.log*
-lerna-debug.log*
-
-# Logs
-logs
-*.log
-
-# Coverage and test output
-coverage/
-.nyc_output/
+# === Backend ===
+/Backend/node_modules/
+/Backend/dist/
+/Backend/.env
+/Backend/.env.local
+/Backend/coverage/
+/Backend/.nyc_output/
+/Backend/logs
+/Backend/*.log
 
 # === Frontend ===
-# (React, Vue, Vite, etc.)
-*.local
-*.cache
-.vite
-.svelte-kit
-.next
-out/
-public/build/
-temp/
+/Frontend/node_modules/
+/Frontend/dist/
+/Frontend/build/
+/Frontend/.env
+/Frontend/.env.local
+/Frontend/.vite
+/Frontend/.cache
+/Frontend/.next
+/Frontend/out/
+/Frontend/public/build/
+/Frontend/temp/
+/Frontend/*.log
 
-# === OS files ===
-.DS_Store
-Thumbs.db
-
-# === IDEs ===
-.vscode/
-.idea/
-*.sublime-workspace
-*.sublime-project
-*.sw?
-*.code-workspace
-
-# === Optional Files ===
-*.tgz
+# === Shared (both folders or root) ===
+*.log
 *.lock
+*.tmp
+*.pid
+*.tgz
 *.bak
 *.old
 *.orig
 
-# === Optional: ignore build artifacts ===
-**/build/
-**/dist/
+# === OS junk ===
+.DS_Store
+Thumbs.db
 
-# === Optional: ignore local debug config files ===
-*.launch
-*.log
-*.tmp
-*.pid
+# === IDEs & editors ===
+.vscode/
+.idea/
+/*.code-workspace
+*.sublime-workspace
+*.sublime-project
+*.sw?
 
-# === Optional: ignore frontend preview hosts ===
-netlify.toml
-.vercel/
-
-# === Allow these specific VSCode settings if needed ===
+# === Optional: Allow some VSCode configs
 !.vscode/settings.json
 !.vscode/tasks.json
 !.vscode/launch.json
+
+# === Deployment config (optional)
+/.vercel/
+/netlify.toml

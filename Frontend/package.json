@@ -5,6 +5,7 @@
   "main": "app.js",
   "scripts": {
     "dev": "vite --host",
+    "build": "vite build",
     "preview": "vite preview",
     "format": "prettier --write \"src/**/*.{js,jsx}\"",
     "test": "echo \"Error: no test specified\" && exit 1",

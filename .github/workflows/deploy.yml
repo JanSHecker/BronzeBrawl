@@ -1,0 +1,55 @@
+name: Deploy to Hetzner
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            Frontend/package-lock.json
+            Backend/package-lock.json
+
+      - name: Verify frontend build
+        working-directory: Frontend
+        env:
+          VITE_API_BASE_URL: /api
+        run: |
+          npm ci
+          npm run build
+
+      - name: Verify backend build and tests
+        working-directory: Backend
+        run: |
+          npm ci
+          npm run test:unit
+          npm run build
+
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.HETZNER_SSH_KEY }}
+
+      - name: Add server to known_hosts
+        run: ssh-keyscan -H ${{ secrets.HETZNER_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy on server
+        env:
+          HETZNER_HOST: ${{ secrets.HETZNER_HOST }}
+          HETZNER_USER: ${{ secrets.HETZNER_USER }}
+          DEPLOY_PATH: ${{ secrets.HETZNER_DEPLOY_PATH }}
+          DEPLOY_REPO: https://github.com/JanSHecker/BronzeBrawl.git
+        run: |
+          ssh ${HETZNER_USER}@${HETZNER_HOST} "mkdir -p ${DEPLOY_PATH}"
+          ssh ${HETZNER_USER}@${HETZNER_HOST} "set -euo pipefail; if [ ! -d '${DEPLOY_PATH}/.git' ]; then git clone '${DEPLOY_REPO}' '${DEPLOY_PATH}'; fi; cd '${DEPLOY_PATH}'; chmod +x scripts/deploy.sh; ./scripts/deploy.sh"

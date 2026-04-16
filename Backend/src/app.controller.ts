@@ -23,6 +23,14 @@ export class AppController {
     private readonly teamService: TeamService,
   ) {}
 
+  @Get('health')
+  getHealth() {
+    return {
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+    };
+  }
+
   @Get('lolInput')
   getHello(): object {
     return this.lolApiService.getLolInput();

@@ -23,6 +23,8 @@
 /Frontend/*.log
 
 # === Shared (both folders or root) ===
+.env.prod
+.env.production
 *.log
 *.lock
 *.tmp

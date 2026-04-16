@@ -1,12 +1,13 @@
 import { useParams } from "react-router-dom";
 import NameForm from "./NameForm";
 import { GAME_ID_KEY } from "../constants";
+import { API_BASE_URL } from "../constants";
 
 const FrontPage = () => {
   const params = useParams();
   const gameId = params.parameter;
   localStorage.setItem(GAME_ID_KEY, gameId);
-  const currentDomain = "http://" + window.location.hostname;
+  const currentDomain = API_BASE_URL;
   localStorage.setItem("baseURL", currentDomain);
   return (
     <>

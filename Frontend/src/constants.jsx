@@ -1,5 +1,8 @@
+const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
+export const API_BASE_URL = (configuredApiBaseUrl || "/api").replace(/\/$/, "");
+
 //serverports
-export const BACKEND_PORT = ":3000/";
+export const BACKEND_PORT = "/";
 export const FRONTEND_PORT = ":5173/";
 
 //localstorage Keys

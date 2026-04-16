@@ -1,6 +1,6 @@
 import axios from "axios";
 import { useEffect, useState } from "react";
-import { BACKEND_PORT } from "../constants";
+import { API_BASE_URL, BACKEND_PORT } from "../constants";
 import { Button } from "react-daisyui";
 
 // JSON Display Component
@@ -115,6 +115,7 @@ const LegacyInfo = () => (
 const LoLApiFeed = () => {
   const PROXY_BASE_URL = "http://localhost:3002";
   const LOL_DATA_ENDPOINT = "/lol-data";
+  const backendBaseUrl = localStorage.getItem("baseURL") || API_BASE_URL;
 
   // State to track proxy connection status
   const [proxyStatus, setProxyStatus] = useState("checking"); // checking, connected, error
@@ -159,7 +160,7 @@ const LoLApiFeed = () => {
       try {
         const lolInput = await getLolInput();
         const response = await axios.post(
-          localStorage.getItem("baseURL") + BACKEND_PORT + "sendLoLInput",
+          backendBaseUrl + BACKEND_PORT + "sendLoLInput",
           lolInput
         );
 

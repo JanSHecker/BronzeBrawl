@@ -2,11 +2,12 @@ import { useState } from "react";
 import CreationForm from "./CreationForm";
 import Linkbox from "./Linkbox";
 import { Button } from "react-daisyui";
+import { API_BASE_URL } from "../constants";
 
 const CreationPage = () => {
   const [gameId, setGameId] = useState("");
-  const currentDomain = "http://" + window.location.hostname;
-  console.log(currentDomain);
+  const currentDomain = API_BASE_URL;
+  localStorage.setItem("baseURL", currentDomain);
   return (
     <div className="flex flex-col border rounded border-black p-1 bg-slate-300 items-center">
       {/* <img

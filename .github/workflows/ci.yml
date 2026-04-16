@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [frontend, backend]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            Frontend/package-lock.json
+            Backend/package-lock.json
+
+      - name: Install frontend dependencies
+        if: matrix.app == 'frontend'
+        working-directory: Frontend
+        run: npm ci
+
+      - name: Build frontend
+        if: matrix.app == 'frontend'
+        working-directory: Frontend
+        env:
+          VITE_API_BASE_URL: /api
+        run: npm run build
+
+      - name: Install backend dependencies
+        if: matrix.app == 'backend'
+        working-directory: Backend
+        run: npm ci
+
+      - name: Run backend tests
+        if: matrix.app == 'backend'
+        working-directory: Backend
+        run: npm run test:unit
+
+      - name: Build backend
+        if: matrix.app == 'backend'
+        working-directory: Backend
+        run: npm run build

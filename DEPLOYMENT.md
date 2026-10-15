@@ -30,6 +30,7 @@ This repository now includes a production-oriented deployment setup for a Hetzne
 - Production always uses `synchronize: false` and `dropSchema: false`
 - `npm run start:prod` runs the versioned migration runner before Nest starts
 - `GET /health` returns JSON `status`/`readiness` and returns HTTP 503 until PostgreSQL and every application table exist
+- Replay files are stored in the separate persistent `replay_data` Docker volume; the replay operator token is supplied only through `REPLAY_ADMIN_TOKEN` and is never committed
 
 ## Server setup
 
@@ -56,6 +57,8 @@ Set real values for:
 - `POSTGRES_PASSWORD`
 - `POSTGRES_DB`
 - optionally `VITE_API_BASE_URL` (default `/api` is correct when using nginx reverse proxy)
+- `REPLAY_ADMIN_TOKEN` (generate a long random operator token; never commit it)
+- `REPLAY_STORAGE_DIR` (default `/var/lib/bronzebrawl/replays` in production; keep it on the persistent Docker volume)
 
 The deploy script stores database backups outside the checkout, in the SSH
 deploy user's state directory: `${XDG_STATE_HOME:-$HOME/.local/state}/bronzebrawl/backups`.

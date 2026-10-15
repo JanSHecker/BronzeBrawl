@@ -103,6 +103,7 @@ const LoLApiFeed = () => {
   return (
     <div className="min-h-screen p-4">
       <h1 className="text-2xl font-bold mb-4">League of Legends API Feed</h1>
+      <p className="mb-4">Browser-Relay: nicht gleichzeitig mit dem Companion-Direktmodus betreiben. <a className="underline" href="/replays#companion-setup">Companion einrichten und Modus wählen</a>. Diese Seite sendet bei vorhandener Host-Berechtigung; für den Direktmodus diesen Tab schließen.</p>
       <div className="flex gap-4 h-[calc(100vh-8rem)]">
         <div className="w-1/3 flex flex-col gap-4">
           <StatusMessage status={proxyStatus} error={lastError} />

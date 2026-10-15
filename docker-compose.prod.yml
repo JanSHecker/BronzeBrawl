@@ -25,6 +25,9 @@ services:
       POSTGRES_PORT: 5432
       TYPEORM_SYNCHRONIZE: "false"
       TYPEORM_DROP_SCHEMA: "false"
+      REPLAY_STORAGE_DIR: /var/lib/bronzebrawl/replays
+    volumes:
+      - replay_data:/var/lib/bronzebrawl/replays
     ports:
       - "127.0.0.1:3000:3000"
     depends_on:
@@ -52,3 +55,4 @@ services:
 
 volumes:
   postgres_data:
+  replay_data:

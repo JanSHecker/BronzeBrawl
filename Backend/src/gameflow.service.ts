@@ -88,6 +88,14 @@ export class GameflowService {
       || this.database?.driver?.options?.type === 'postgres';
   }
 
+  private async lockGame(store: Store, gameId: number): Promise<void> {
+    if (this.isPostgres() && store?.query) {
+      // Keep the lock in the transaction, rather than using an application
+      // mutex. This serializes game mutations across all API processes.
+      await store.query('SELECT pg_advisory_xact_lock($1)', [gameId]);
+    }
+  }
+
   private async transaction<T>(work: (store: Store) => Promise<T>, gameId?: number): Promise<T> {
     // The behavioral contract uses a tiny in-memory repository. It cannot use
     // TypeORM's transaction API, so provide the same serialization and rollback
@@ -111,9 +119,7 @@ export class GameflowService {
     }
     const transactionalWork = async (store: Store): Promise<T> => {
       if (gameId !== undefined && this.isPostgres() && store?.query) {
-        // Advisory xact locks are held by PostgreSQL until this transaction
-        // commits, including across multiple application processes.
-        await store.query('SELECT pg_advisory_xact_lock($1)', [gameId]);
+        await this.lockGame(store, gameId);
       }
       return work(store);
     };
@@ -560,24 +566,44 @@ export class GameflowService {
     if (!gameId) this.fail('invalid gameId');
     return this.transaction(async (store) => {
       const player = await this.authorizePlayer(input?.player, token, store);
-      if (player.game?.state === 'ended') this.fail('game has ended', HttpStatus.CONFLICT);
+      // Reload the game inside the locked transaction. The client-provided
+      // counter/mode and a relation loaded before the lock are never trusted.
+      const game = await this.getGameOrFail(player.game, store);
+      if (game.gameId !== gameId) this.fail('player belongs to another game', HttpStatus.CONFLICT);
+      if (game.state === 'ended') this.fail('game has ended', HttpStatus.CONFLICT);
       if (!player.team) this.fail('join a team before choosing a champion', HttpStatus.CONFLICT);
       const championId = this.id(input?.champion, 'championId');
       const champion = await this.findOne(Champion, (row) => row.championId === championId, store, ['team', 'team.game', 'player']);
       if (!champion) this.fail('champion not found', HttpStatus.NOT_FOUND);
-      if (this.gameId(champion.team?.game) !== this.gameId(player.game)) this.fail('champion belongs to another game', HttpStatus.FORBIDDEN);
+      if (this.gameId(champion.team?.game) !== game.gameId) this.fail('champion belongs to another game', HttpStatus.FORBIDDEN);
       if (this.teamId(champion.team) !== this.teamId(player.team)) this.fail('champion is on the other team', HttpStatus.FORBIDDEN);
-      if (champion.player && this.playerId(champion.player) !== player.playerId) this.fail('champion is occupied', HttpStatus.CONFLICT);
       if (player.champion && this.championId(player.champion) === championId) this.fail('same champion selection resets no counters', HttpStatus.CONFLICT);
+
+      // Both the candidate and the player's current champion were loaded in
+      // this transaction after the game lock. Never clear an ownership link
+      // that belongs to a newer owner if a stale relation is encountered.
+      if (champion.player) this.fail('champion is occupied', HttpStatus.CONFLICT);
       if (player.champion) {
-        const available = player.game.rotationMode === 'Kills' ? Number(player.killCounter) <= 0 : Number(player.deathCounter) <= 0;
+        const currentChampion = await this.findOne(
+          Champion,
+          (row) => row.championId === this.championId(player.champion),
+          store,
+          ['team', 'team.game', 'player'],
+        );
+        if (!currentChampion) this.fail('current champion not found', HttpStatus.CONFLICT);
+        if (currentChampion.player && this.playerId(currentChampion.player) !== player.playerId) {
+          this.fail('current champion is occupied', HttpStatus.CONFLICT);
+        }
+        const available = game.rotationMode === 'Kills'
+          ? Number(player.killCounter) <= 0
+          : Number(player.deathCounter) <= 0;
         if (!available) this.fail('rotation counter is not exhausted', HttpStatus.CONFLICT);
-        player.champion.player = null;
-        await this.save(Champion, player.champion, store);
+        currentChampion.player = null;
+        await this.save(Champion, currentChampion, store);
       }
       champion.player = player;
       player.champion = champion;
-      const counter = Number(player.game.defaultRotationCounter);
+      const counter = Number(game.defaultRotationCounter);
       player.killCounter = counter;
       player.deathCounter = counter;
       await this.save(Champion, champion, store);
@@ -635,31 +661,43 @@ export class GameflowService {
 
   async confirmReward(request: any, token: string): Promise<any> {
     const rewardId = this.id(request?.id, 'rewardId');
-    const reward = await this.findOne(Reward, (row) => row.rewardId === rewardId, this.database, ['player']);
-    if (!reward) this.fail('reward not found', HttpStatus.NOT_FOUND);
-    const owner = await this.getPlayerOrFail(this.playerId(reward.player));
-    const gameId = this.gameId(owner.game);
-    if (!gameId) this.fail('invalid gameId');
+    // The reward is deliberately discovered inside the transaction. A
+    // preflight read followed by a second transaction would permit a stale
+    // distributed flag or owner relation to be used by concurrent requests.
     return this.transaction(async (store) => {
-      const rewardId = this.id(request?.id, 'rewardId');
-      const reward = await this.findOne(Reward, (row) => row.rewardId === rewardId, store, ['player', 'takedown']);
+      let reward = await this.findOne(Reward, (row) => row.rewardId === rewardId, store, ['player']);
+      if (!reward) this.fail('reward not found', HttpStatus.NOT_FOUND);
+
+      const ownerPreview = await this.getPlayerOrFail(this.playerId(reward.player), store);
+      const gameId = this.gameId(ownerPreview.game);
+      if (!gameId) this.fail('invalid gameId');
+      await this.lockGame(store, gameId);
+
+      // READ COMMITTED PostgreSQL transactions see the winner's committed
+      // distributed flag after waiting on the advisory lock. Reload all
+      // relations before making the one-and-only consumption decision.
+      reward = await this.findOne(Reward, (row) => row.rewardId === rewardId, store, ['player', 'takedown']);
       if (!reward) this.fail('reward not found', HttpStatus.NOT_FOUND);
       // Never trust distributor/player IDs from the request. The reward owner
       // is the only principal allowed to consume it; the token proves that
       // principal's capability.
       const owner = await this.authorizePlayer(this.playerId(reward.player), token, store);
       if (reward.distributed) this.fail('reward already consumed', HttpStatus.CONFLICT);
+      const game = await this.getGameOrFail(owner.game, store);
       const recipientId = this.id(request?.punishment?.recipient?.playerId, 'recipient');
       const recipient = await this.getPlayerOrFail(recipientId, store);
-      if (this.gameId(recipient.game) !== this.gameId(owner.game)) this.fail('recipient belongs to another game', HttpStatus.FORBIDDEN);
+      if (this.gameId(recipient.game) !== game.gameId) this.fail('recipient belongs to another game', HttpStatus.FORBIDDEN);
       if (!owner.team || !recipient.team || this.teamId(owner.team) === this.teamId(recipient.team)) this.fail('recipient must be an opposing teammate');
       const punishment = await this.save(Punishment, {
+        // A distributed reward always creates the server-defined distributed
+        // punishment. Amount comes from the persisted reward (created from
+        // Game.rewardAmount); distributor comes from the authenticated owner.
         amount: reward.amount, punishmentType: 0, recieved: false, distributor: owner, player: recipient,
       }, store);
       reward.distributed = true;
       await this.save(Reward, reward, store);
       return this.publicPunishment(punishment);
-    }, gameId);
+    });
   }
 
   async confirmPunishment(request: any, token: string): Promise<any> {

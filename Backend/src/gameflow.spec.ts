@@ -153,6 +153,39 @@ describe('gameflow contract',()=>{
     await service.chooseChampion({player:a.playerId,champion:champions[1].championId,killCounter:999},a.playerToken);
     const s=await service.status(a.playerId,a.playerToken); expect(s.counter).toEqual([2,2]); expect(s.champion.championId).toBe(champions[1].championId);
   });
+  test('uses the configured death counter for Deaths rotation and ignores a forged amount',async()=>{
+    const deathSettings={...settings,rotationMode:'Deaths',defaultCounter:3};
+    const g=await service.runGame(deathSettings);
+    await service.ingest({gameId:g.gameId,input:feed([],10)},g.hostToken);
+    const first=await service.createPlayer({playerName:'First',game:g.gameId});
+    const second=await service.createPlayer({playerName:'Second',game:g.gameId});
+    const gameTeams=(await service.getTeams(g.gameId)).teams;
+    const gameChampions=await service.getAllChampions(g.gameId);
+    await service.joinTeam({player:first.playerId,team:gameTeams[0].teamId},first.playerToken);
+    await service.joinTeam({player:second.playerId,team:gameTeams[1].teamId},second.playerToken);
+    await service.chooseChampion({player:first.playerId,champion:gameChampions.blue[0].championId},first.playerToken);
+    await service.chooseChampion({player:second.playerId,champion:gameChampions.red[0].championId},second.playerToken);
+    await service.ingest({gameId:g.gameId,input:feed([
+      kill(1,'Bob#EUW','Alice#EUW'), kill(2,'Bob#EUW','Alice#EUW'), kill(3,'Bob#EUW','Alice#EUW'),
+    ],13)},g.hostToken);
+    await service.chooseChampion({player:first.playerId,champion:gameChampions.blue[1].championId,counter:999},first.playerToken);
+    expect(await service.status(first.playerId,first.playerToken)).toMatchObject({counter:[3,3],champion:{championId:gameChampions.blue[1].championId}});
+  });
+  test('serializes concurrent rotation and cannot clear a newer champion owner',async()=>{
+    await setup();
+    await service.ingest({gameId:game.gameId,input:feed([kill(1),kill(2)])},game.hostToken);
+    const third=await service.createPlayer({playerName:'Third',game:game.gameId});
+    await service.joinTeam({player:third.playerId,team:teams[0].teamId},third.playerToken);
+    const attempts=await Promise.allSettled([
+      service.chooseChampion({player:a.playerId,champion:champions[1].championId},a.playerToken),
+      service.chooseChampion({player:third.playerId,champion:champions[1].championId},third.playerToken),
+    ]);
+    expect(attempts.filter(result=>result.status==='fulfilled')).toHaveLength(1);
+    expect(attempts.filter(result=>result.status==='rejected').map(result=>(result as any).reason.status)).toEqual([409]);
+    const selected=await service.getAllChampions(game.gameId);
+    const winnerId=(attempts.find(result=>result.status==='fulfilled') as any).value.player.playerId;
+    expect(selected.blue.find((champion:any)=>champion.championId===champions[1].championId).player).toMatchObject({playerId:winnerId});
+  });
   test('serializes concurrent feeds without lost counters or duplicate consequences',async()=>{
     await setup(); await Promise.all([service.ingest({gameId:game.gameId,input:feed([kill(1)])},game.hostToken),service.ingest({gameId:game.gameId,input:feed([kill(1),kill(2)])},game.hostToken)]);
     expect(db.all(Reward)).toHaveLength(2); expect((await service.status(a.playerId,a.playerToken)).counter).toEqual([0,2]);

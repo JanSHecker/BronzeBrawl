@@ -17,7 +17,7 @@ const CreationPage = () => {
       /> */}
       <CreationForm setGameId={setGameId} currentDomain={currentDomain} />
       <Linkbox gameId={gameId} />
-      <a href={window.location.origin + "/lolApi"} target="_blank">
+      <a href={window.location.origin + "/lolApi"} target="_blank" rel="noreferrer">
         <Button color="secondary" className="m-2 justify-self-center">
           Open LoL Monitor
         </Button>

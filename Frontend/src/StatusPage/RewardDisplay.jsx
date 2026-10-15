@@ -1,7 +1,6 @@
-import { useEffect, useState } from "react";
 import DistributionCard from "./DistributionCard";
 
-const RewardDisplay = ({ rewardStack, enemyTeam }) => {
+const RewardDisplay = ({ rewardStack, enemyTeam, onSuccess }) => {
   // console.log(enemyTeam);
   const remainingRewards = rewardStack.length;
   let message;
@@ -18,6 +17,7 @@ const RewardDisplay = ({ rewardStack, enemyTeam }) => {
           enemyTeam={enemyTeam}
           rewardStack={rewardStack}
           hasRewards={rewardStack.length > 0}
+          onSuccess={onSuccess}
         />
       </div>
       <div className="self-end text-center border border-black p-3 m-1 bg-secondary">
@@ -29,8 +29,7 @@ const RewardDisplay = ({ rewardStack, enemyTeam }) => {
 };
 export default RewardDisplay;
 
-const EnemyTeam = ({ enemyTeam, rewardStack, hasRewards }) => {
-  console.log({ enemyTeam });
+const EnemyTeam = ({ enemyTeam, rewardStack, hasRewards, onSuccess }) => {
   return (
     <>
       {enemyTeam.map((enemy, index) => (
@@ -39,6 +38,7 @@ const EnemyTeam = ({ enemyTeam, rewardStack, hasRewards }) => {
           champion={enemy}
           rewardStack={rewardStack}
           hasRewards={hasRewards}
+          onSuccess={onSuccess}
         />
       ))}
     </>

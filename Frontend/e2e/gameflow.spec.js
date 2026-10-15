@@ -1,0 +1,109 @@
+import { test, expect } from "@playwright/test";
+
+// Clearly synthetic audit fixtures, never uploaded to the public service.
+const roster = [
+  { championName: "Ahri", riotIdGameName: "AuditAlice", riotIdTagLine: "TEST", team: "ORDER" },
+  { championName: "Lux", riotIdGameName: "AuditAssist", riotIdTagLine: "TEST", team: "ORDER" },
+  { championName: "Garen", riotIdGameName: "AuditBob", riotIdTagLine: "TEST", team: "CHAOS" },
+];
+const kill = (id, killer = "AuditAlice#TEST") => ({ EventID: id, EventName: "ChampionKill", EventTime: id, KillerName: killer, VictimName: "AuditBob#TEST", Assisters: ["AuditAssist#TEST"] });
+
+test("two isolated players complete the secured gameflow and recover after failure/reload", async ({ browser, page }) => {
+  const errors = [];
+  const watch = async tab => {
+    tab.on("pageerror", error => { errors.push(error.message); console.error(error.message); });
+    await tab.route(/^https:\/\/(static\.bigbrain\.gg|ddragon\.leagueoflegends\.com)\//, route => route.abort());
+  };
+  await watch(page);
+  await page.goto("/");
+  const inputs = page.getByRole("textbox");
+  await inputs.nth(0).fill("7");
+  await inputs.nth(1).fill("9");
+  await inputs.nth(2).fill("2");
+  await page.getByRole("button", { name: "CREATE", exact: true }).click();
+  const invite = page.locator('a[href*="/name/"]');
+  await expect(invite).toBeVisible();
+  const url = await invite.getAttribute("href");
+  const host = await page.evaluate(() => {
+    const gameId = Number(localStorage.getItem("hostGameId"));
+    return { gameId, token: localStorage.getItem(`hostToken:${gameId}`) };
+  });
+  const events = [{ EventID: 0, EventName: "GameStart", EventTime: 0 }];
+  const upload = async () => {
+    const response = await page.request.post("/api/sendLoLInput", {
+      headers: { "X-Game-Token": host.token },
+      data: { gameId: host.gameId, input: { allPlayers: roster, events: { Events: events }, gameData: { gameTime: 20, mapNumber: 11 } } },
+    });
+    expect(response.ok(), await response.text()).toBe(true);
+  };
+  await upload();
+  const monitor = await page.context().newPage();
+  await watch(monitor);
+  await monitor.route("http://localhost:3002/lol-data", route => route.fulfill({
+    status: 200, contentType: "application/json",
+    body: JSON.stringify({ allPlayers: roster, events: { Events: events }, gameData: { gameTime: 20, mapNumber: 11 } }),
+  }));
+  const hostUpload = monitor.waitForResponse(response => response.url().endsWith("/api/sendLoLInput"));
+  await monitor.goto("/lolApi");
+  const response = await hostUpload;
+  expect(response.ok()).toBe(true);
+  expect(response.request().postDataJSON().gameId).toBe(host.gameId);
+  expect(response.request().headers()["x-game-token"]).toBe(host.token);
+  await monitor.close();
+  const blueContext = await browser.newContext();
+  const redContext = await browser.newContext();
+  try {
+    const blue = await blueContext.newPage();
+    const red = await redContext.newPage();
+    for (const tab of [blue, red]) {
+      await watch(tab);
+      await tab.goto(url);
+      await tab.getByRole("textbox").fill("Audit Alex");
+      await tab.getByRole("button", { name: "START", exact: true }).click();
+      await expect(tab).toHaveURL(/\/team$/);
+      await expect(tab.getByRole("button", { name: "READY" })).toBeDisabled();
+    }
+    await blue.locator("section").filter({ has: blue.getByText("Team Blue", { exact: true }) }).getByRole("button", { name: "Join" }).click();
+    await red.locator("section").filter({ has: red.getByText("Team Red", { exact: true }) }).getByRole("button", { name: "Join" }).click();
+    for (const tab of [blue, red]) {
+      await expect(tab.getByRole("button", { name: "READY" })).toBeEnabled();
+      await tab.getByRole("button", { name: "READY" }).click();
+    }
+    await blue.getByRole("img", { name: "Ahri", exact: true }).click();
+    await red.getByRole("img", { name: "Garen", exact: true }).click();
+    await expect(blue).toHaveURL(/\/status$/);
+    await expect(red).toHaveURL(/\/status$/);
+    events.push(kill(1));
+    await upload();
+    await upload(); // JSONB replay through HTTP must not duplicate consequences.
+    await expect(blue.getByText("1/0/0", { exact: true })).toBeVisible();
+    await expect(red.getByText("You were killed! Drink 7.", { exact: true })).toBeVisible();
+    await blue.route("**/api/Status?*", route => route.fulfill({ status: 503, contentType: "application/json", body: '{"message":"synthetic transient failure"}' }), { times: 1 });
+    await expect(blue.getByRole("alert")).toContainText("synthetic transient failure");
+    await expect(blue.getByRole("alert")).toHaveCount(0);
+    await blue.getByRole("button").filter({ has: blue.getByRole("img", { name: "Garen", exact: true }) }).click();
+    await expect(blue.getByText("You currently have no Rewards!")).toBeVisible();
+    await red.getByRole("button", { name: "Done" }).click();
+    await expect(red.getByText(/punishment from Audit Alex\. Drink 9/)).toBeVisible();
+    await red.getByRole("button", { name: "Done" }).click();
+    await expect(red.getByText("You haven't received any punishments.")).toBeVisible();
+    events.push(kill(2));
+    await upload();
+    await expect(blue).toHaveURL(/\/champion$/);
+    await blue.getByRole("img", { name: "Lux", exact: true }).click();
+    await expect(blue).toHaveURL(/\/status$/);
+    await blue.reload();
+    await expect(blue.getByText("0/0/2", { exact: true })).toBeVisible();
+    events.push(kill(3, "Turret_T200_L0_P3"));
+    await upload();
+    events.push({ EventID: 4, EventName: "GameEnd", EventTime: 20 });
+    await upload();
+    await upload();
+    await expect(blue.getByRole("status")).toHaveText("Game ended");
+    await expect(red.getByRole("status")).toHaveText("Game ended");
+    expect(errors).toEqual([]);
+  } finally {
+    await blueContext.close();
+    await redContext.close();
+  }
+});

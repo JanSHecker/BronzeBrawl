@@ -50,6 +50,11 @@ jobs:
           VITE_API_BASE_URL: /api
         run: npm run build
 
+      - name: Test frontend gameflow regressions
+        if: matrix.app == 'frontend'
+        working-directory: Frontend
+        run: npm test
+
       - name: Install backend dependencies
         if: matrix.app == 'backend'
         working-directory: Backend
@@ -85,3 +90,21 @@ jobs:
         if: matrix.app == 'backend'
         working-directory: Backend
         run: npm run test:unit
+
+      - name: Install browser regression dependencies
+        if: matrix.app == 'backend'
+        working-directory: Frontend
+        run: npm ci
+
+      - name: Install Chromium
+        if: matrix.app == 'backend'
+        working-directory: Frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Run secured multibrowser gameflow regression
+        if: matrix.app == 'backend'
+        working-directory: Frontend
+        env:
+          NODE_ENV: test
+          TEST_DATABASE_URL: "postgres://bronzebrawl:\x62ronzebrawl@127.0.0.1:5432/bronzebrawl_test"
+        run: npm run test:e2e

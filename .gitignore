@@ -21,6 +21,8 @@
 /Frontend/public/build/
 /Frontend/temp/
 /Frontend/*.log
+/Frontend/test-results/
+/Frontend/playwright-report/
 
 # === Shared (both folders or root) ===
 .env

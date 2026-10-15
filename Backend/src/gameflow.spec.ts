@@ -186,5 +186,62 @@ describe('gameflow contract',()=>{
     await setup(); await service.ingest({gameId:game.gameId,input:feed([{EventID:1,EventName:'GameEnd',EventTime:10,Result:'Win'}])},game.hostToken);
     expect((await service.status(a.playerId,a.playerToken)).gameState).toBe('ended');
     await expect(service.createPlayer({playerName:'Late',game:game.gameId})).rejects.toMatchObject({status:409});
+    await expect(service.joinTeam({player:a.playerId,team:teams[0].teamId},a.playerToken)).rejects.toMatchObject({status:409});
+    await expect(service.chooseChampion({player:a.playerId,champion:champions[1].championId},a.playerToken)).rejects.toMatchObject({status:409});
+  });
+  test('accepts real event zero and exact final-snapshot replay after restart', async () => {
+    await setup();
+    const input = feed([{EventID:0,EventName:'GameStart',EventTime:0}, kill(1), {EventID:2,EventName:'GameEnd',EventTime:10}], 10);
+    await service.ingest({gameId:game.gameId,input},game.hostToken);
+    service = new Service(db as any);
+    await service.ingest({gameId:game.gameId,input},game.hostToken);
+    expect(db.all(Event)).toHaveLength(3);
+    expect(db.all(Reward)).toHaveLength(1);
+  });
+  test('tagless roster replay never duplicates champions', async () => {
+    const g = await service.runGame(settings);
+    const input = feed();
+    input.allPlayers.forEach(p => delete p.riotIdTagLine);
+    await service.ingest({gameId:g.gameId,input},g.hostToken);
+    await service.ingest({gameId:g.gameId,input},g.hostToken);
+    expect(db.all(Champion)).toHaveLength(4);
+  });
+  test('rejects malformed assist lists with controlled rollback', async () => {
+    await setup();
+    await expect(service.ingest({gameId:game.gameId,input:feed([{...kill(),Assisters:{bad:true}}])},game.hostToken)).rejects.toMatchObject({status:400});
+    expect(db.all(Event)).toHaveLength(0);
+  });
+  test('ambiguous participant names never silently credit the first champion', async () => {
+    const g = await service.runGame(settings);
+    const input = feed();
+    input.allPlayers[1].riotIdGameName = 'Alice';
+    input.allPlayers[1].riotIdTagLine = 'OTHER';
+    await service.ingest({gameId:g.gameId,input},g.hostToken);
+    input.events.Events = [{...kill(1,'Alice'), Assisters: []}];
+    await expect(service.ingest({gameId:g.gameId,input},g.hostToken)).rejects.toMatchObject({status:400});
+    expect(db.all(Takedown)).toHaveLength(0);
+  });
+  test('participant aliases resolve before environment-name prefixes', async () => {
+    const g = await service.runGame(settings);
+    const input = feed();
+    input.allPlayers[0].riotIdGameName = 'Baroness';
+    await service.ingest({gameId:g.gameId,input},g.hostToken);
+    input.events.Events = [{...kill(1,'Baroness#EUW'),Assisters:[]}];
+    await service.ingest({gameId:g.gameId,input},g.hostToken);
+    expect(db.all(Takedown)[0].killer.championName).toBe('Ahri');
+  });
+  test('source changes and malformed events are controlled without advancing feed progress', async () => {
+    await setup();
+    const changed = feed(); changed.gameData.mapNumber = 12;
+    await expect(service.ingest({gameId:game.gameId,input:changed},game.hostToken)).rejects.toMatchObject({status:409});
+    await expect(service.ingest({gameId:game.gameId,input:feed([null,kill()])},game.hostToken)).rejects.toMatchObject({status:400});
+    expect(db.all(Event)).toHaveLength(0);
+  });
+  test('environment kills neither reward nor prevent deletion of unselected lobby players', async () => {
+    await setup();
+    const lobby = await service.createPlayer({playerName:'Lobby',game:game.gameId});
+    await service.ingest({gameId:game.gameId,input:feed([kill(1,'Minion_T100_L0')])},game.hostToken);
+    expect(db.all(Reward)).toHaveLength(0);
+    await service.deletePlayer({id:lobby.playerId},lobby.playerToken);
   });
 });

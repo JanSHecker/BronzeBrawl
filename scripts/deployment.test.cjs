@@ -82,13 +82,16 @@ test('CI runs real postgres integration and deployment/routing tests before depl
   assert.match(ci, /TEST_DATABASE_URL/);
   assert.match(ci, /npm run test:integration/);
   assert.match(ci, /npm run test:unit/);
+  assert.match(ci, /npm test/);
+  assert.match(ci, /playwright install --with-deps chromium/);
+  assert.match(ci, /npm run test:e2e/);
   assert.match(ci, /node --test \.\.\/scripts\/deployment\.test\.cjs/);
   const normalizedCi = ci.replaceAll('\\x62', 'b');
   const servicePassword = normalizedCi.match(/POSTGRES_PASSWORD:\s*([^\s]+)/)?.[1];
   assert.ok(servicePassword, 'CI must define the PostgreSQL service password');
   assert.doesNotMatch(ci, /TEST_DATABASE_URL:[^\n]*\*\*\*/);
   const testUrls = [...normalizedCi.matchAll(/TEST_DATABASE_URL:\s*"?postgres:\/\/[^:]+:([^@"]+)@/g)].map((match) => match[1]);
-  assert.deepEqual(testUrls, [servicePassword, servicePassword]);
+  assert.deepEqual(testUrls, [servicePassword, servicePassword, servicePassword]);
   const deploy = read('.github/workflows/deploy.yml');
   assert.match(deploy, /workflow_run/);
   assert.match(deploy, /conclusion == 'success'/);

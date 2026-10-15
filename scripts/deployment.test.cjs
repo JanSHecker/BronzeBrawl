@@ -3,6 +3,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
+const os = require('node:os');
+const { spawnSync } = require('node:child_process');
 const root = path.resolve(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
@@ -67,6 +69,47 @@ test('database backups default to a private deploy-user directory outside the ch
   assert.match(docs, /\$\{XDG_STATE_HOME:-\$HOME\/\.local\/state\}\/bronzebrawl\/backups/);
   assert.match(docs, /outside the checkout/);
   assert.doesNotMatch(deploy, /\/var\/backups\/bronzebrawl/);
+});
+
+test('public health probe uses the reviewed image without requiring host Node.js', () => {
+  const deploy = read('scripts/deploy.sh');
+  assert.doesNotMatch(deploy, /^\s*node scripts\/health\.cjs/m);
+  assert.match(deploy, /images -q backend/);
+  assert.match(deploy, /docker run --rm --network host --entrypoint node "\$HEALTH_IMAGE" \/app\/scripts\/health\.cjs "\$PUBLIC_HEALTH_URL"/);
+});
+
+test('deployment completes with Docker-only tooling and no host Node.js', (t) => {
+  const bash = process.platform === 'win32' ? 'C:/Program Files/Git/bin/bash.exe' : '/bin/bash';
+  if (!fs.existsSync(bash)) return t.skip('Bash is required for deployment-script execution');
+  const directory = fs.mkdtempSync(path.join(process.env.OPENCODE_TEST_TMP || os.tmpdir(), 'bronzebrawl-deploy-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(directory, 'scripts'));
+  fs.writeFileSync(path.join(directory, '.env.prod'), '');
+  const script = path.join(directory, 'scripts', 'deploy.sh');
+  fs.writeFileSync(script, read('scripts/deploy.sh').replaceAll('\r\n', '\n'));
+  const log = path.join(directory, 'docker-calls.txt');
+  const bootstrap = `
+    git() { return 0; }
+    curl() { return 0; }
+    node() { echo 'Host Node.js is not installed' >&2; return 127; }
+    docker() {
+      printf '%s\\n' "$*" >> "$TEST_DOCKER_LOG"
+      case "$*" in
+        *"images -q backend") echo reviewed-backend-image ;;
+        *"exec -T postgres"*) echo '-- synthetic test backup' ;;
+      esac
+      return 0
+    }
+    export -f git curl node docker
+    bash "$1"
+  `;
+  const result = spawnSync(bash, ['-c', bootstrap, 'deployment-test', script], {
+    encoding: 'utf8',
+    env: { ...process.env, TEST_DOCKER_LOG: log, DEPLOY_REVISION: 'reviewed-revision', BACKUP_DIR: path.join(directory, 'backups'), PUBLIC_HEALTH_URL: 'http://127.0.0.1:8080/api/health' },
+  });
+  assert.equal(result.status, 0, result.stderr || result.error?.message);
+  assert.match(result.stdout, /\[deploy\] Done/);
+  assert.match(fs.readFileSync(log, 'utf8'), /run --rm --network host --entrypoint node reviewed-backend-image \/app\/scripts\/health\.cjs http:\/\/127\.0\.0\.1:8080\/api\/health/);
 });
 
 test('nginx public api cannot fall through to SPA', () => {

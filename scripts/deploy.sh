@@ -25,8 +25,8 @@ if [[ -z "$DEPLOY_REVISION" ]]; then
   exit 1
 fi
 
-# Never discard operator changes on a live host. The fast-forward pull is the
-# only repository mutation and fails if the checkout is not clean.
+# Never discard operator changes on a live host. Only switch a clean checkout
+# to an explicitly verified CI revision.
 git fetch origin "$BRANCH"
 if [[ -n "$(git status --porcelain)" ]]; then
   echo "Refusing deployment: working tree has local changes."
@@ -56,7 +56,15 @@ echo "[deploy] Rebuilding containers"
 "${COMPOSE[@]}" up -d --wait --build --remove-orphans
 
 echo "[deploy] Checking public JSON API health"
-node scripts/health.cjs "$PUBLIC_HEALTH_URL"
+# Production needs Docker, not a second Node.js installation on the host.
+# Host networking keeps 127.0.0.1 pointed at the public nginx port, while the
+# probe itself comes from the same reviewed image that is running the backend.
+HEALTH_IMAGE="$("${COMPOSE[@]}" images -q backend)"
+if [[ -z "$HEALTH_IMAGE" ]]; then
+  echo "Refusing deployment: backend health probe image is unavailable."
+  exit 1
+fi
+docker run --rm --network host --entrypoint node "$HEALTH_IMAGE" /app/scripts/health.cjs "$PUBLIC_HEALTH_URL"
 
 # A basic frontend probe confirms the SPA remains available without using it as
 # an API fallback.

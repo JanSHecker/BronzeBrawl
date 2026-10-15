@@ -55,3 +55,5 @@ dedicated test database; dispose of that database afterward, not production data
   automatically only after successful CI. Deployments are serialized and check
   out the tested revision before invoking its reviewed deployment script;
   superseded revisions are skipped and local operator changes are never reset.
+- The public JSON health probe runs from the reviewed backend image with Linux
+  host networking. The server needs Docker and curl, not a host Node.js install.

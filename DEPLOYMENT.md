@@ -14,7 +14,7 @@ This repository now includes a production-oriented deployment setup for a Hetzne
 - `Backend/Dockerfile.prod`
   - Builds the NestJS app and runs the compiled output
 - `scripts/deploy.sh`
-  - Fast-forward updates only, backs up PostgreSQL, rebuilds, migrates, and checks public JSON health
+  - Checks out a verified CI revision without discarding local changes, backs up PostgreSQL, rebuilds, migrates, and checks public JSON health
 - `.github/workflows/ci.yml`
   - Runs the frontend build plus backend migration, PostgreSQL integration, unit tests, and build
 - `.github/workflows/deploy.yml`
@@ -67,6 +67,7 @@ deploy user.
 ### 3. Install Docker if needed
 
 Your deploy script assumes Docker and the Compose plugin already exist.
+The JSON health probe runs in the reviewed backend image; no host Node.js installation is required.
 
 ### 4. First app boot
 

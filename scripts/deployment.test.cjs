@@ -96,6 +96,13 @@ test('CI runs real postgres integration and deployment/routing tests before depl
   assert.match(deploy, /workflow_run/);
   assert.match(deploy, /conclusion == 'success'/);
   assert.match(deploy, /workflow_run\.head_sha/);
+  assert.match(deploy, /group: bronzebrawl-production/);
+  assert.match(deploy, /cancel-in-progress: false/);
+  assert.match(deploy, /git status --porcelain/);
+  assert.match(deploy, /Skipping superseded CI revision/);
+  assert.match(deploy, /git switch --detach/);
+  assert.doesNotMatch(deploy, /git reset|checkout[^\n]*--force/);
+  assert.ok(deploy.indexOf('git switch --detach') < deploy.indexOf('bash scripts/deploy.sh'), 'run the reviewed deployment script, not a stale server copy');
 });
 
 test('production ignores destructive schema overrides and all metadata is discovered in TS and JS', () => {

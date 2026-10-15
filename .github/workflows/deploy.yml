@@ -6,6 +6,10 @@ on:
     types: [completed]
     branches: [main]
 
+concurrency:
+  group: bronzebrawl-production
+  cancel-in-progress: false
+
 jobs:
   deploy:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
@@ -28,4 +32,4 @@ jobs:
           DEPLOY_REPO: https://github.com/JanSHecker/BronzeBrawl.git
         run: |
           ssh ${HETZNER_USER}@${HETZNER_HOST} "mkdir -p ${DEPLOY_PATH}"
-          ssh ${HETZNER_USER}@${HETZNER_HOST} "set -euo pipefail; if [ ! -d '${DEPLOY_PATH}/.git' ]; then git clone '${DEPLOY_REPO}' '${DEPLOY_PATH}'; fi; cd '${DEPLOY_PATH}'; chmod +x scripts/deploy.sh; DEPLOY_REVISION='${DEPLOY_REVISION}' ./scripts/deploy.sh"
+          ssh ${HETZNER_USER}@${HETZNER_HOST} "set -euo pipefail; if [ ! -d '${DEPLOY_PATH}/.git' ]; then git clone '${DEPLOY_REPO}' '${DEPLOY_PATH}'; fi; cd '${DEPLOY_PATH}'; git fetch origin main; if [ \"\$(git rev-parse origin/main)\" != '${DEPLOY_REVISION}' ]; then echo 'Skipping superseded CI revision'; exit 0; fi; if [ -n \"\$(git status --porcelain)\" ]; then echo 'Refusing deployment: working tree has local changes.' >&2; exit 1; fi; git merge-base --is-ancestor '${DEPLOY_REVISION}' origin/main; git switch --detach '${DEPLOY_REVISION}'; DEPLOY_REVISION='${DEPLOY_REVISION}' bash scripts/deploy.sh"

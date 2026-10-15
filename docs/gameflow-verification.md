@@ -52,4 +52,6 @@ dedicated test database; dispose of that database afterward, not production data
   event identities require operator review, never automatic record deletion.
 - These are local/CI checks with synthetic fixtures, not proof of a live LoL
   session or production deployment. The existing main-branch workflow deploys
-  automatically only after successful CI.
+  automatically only after successful CI. Deployments are serialized and check
+  out the tested revision before invoking its reviewed deployment script;
+  superseded revisions are skipped and local operator changes are never reset.

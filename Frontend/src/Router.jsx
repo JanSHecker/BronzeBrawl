@@ -4,7 +4,6 @@ import ChampionSelectionPage from "./ChampionSelectionPage/ChampionSelectionPage
 import StatusPage from "./StatusPage/StatusPage";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import CreationPage from "./CreationPage/CreationPage";
-import { useEffect } from "react";
 import LoLApiFeed from "./LoLApi/LolApi";
 
 const router = createBrowserRouter([

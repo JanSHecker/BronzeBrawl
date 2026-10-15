@@ -1,5 +1,5 @@
 import { Button } from "react-daisyui";
-import { BACKEND_PORT, PLAYER_NAME_KEY } from "../constants";
+import { BACKEND_PORT } from "../constants";
 import axios from "axios";
 
 const Player = ({ playerName, editModeOn, id }) => {
@@ -8,7 +8,7 @@ const Player = ({ playerName, editModeOn, id }) => {
       <div className="flex items-center gap-2">
         <h1>
           {playerName}
-          {playerName === localStorage.getItem(PLAYER_NAME_KEY) ? " (you)" : ""}
+          {Number(id) === Number(localStorage.getItem("playerId")) ? " (you)" : ""}
         </h1>
         <DeleteButton id={id} />
       </div>
@@ -18,7 +18,7 @@ const Player = ({ playerName, editModeOn, id }) => {
       <div className="flex items-center gap-2">
         <h1 className="font-semibold">
           {playerName}
-          {playerName === localStorage.getItem(PLAYER_NAME_KEY) ? " (you)" : ""}
+          {Number(id) === Number(localStorage.getItem("playerId")) ? " (you)" : ""}
         </h1>
       </div>
     );

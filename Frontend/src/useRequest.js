@@ -24,7 +24,7 @@ export function useAction() {
 }
 
 // Schedule only after completion: no overlapping requests, even on a slow feed.
-export function usePolling(work, delay = 1000) {
+export function usePolling(work, delay = 1000, scope) {
   const latest = useRef(work);
   latest.current = work;
   const [error, setError] = useState("");
@@ -62,6 +62,6 @@ export function usePolling(work, delay = 1000) {
     context.current = current;
     poll();
     return () => { disposed = true; current.active = false; controller.abort(); clearTimeout(timer); if (context.current === current) context.current = null; };
-  }, [delay, revision]);
+  }, [delay, revision, scope]);
   return { error, retry, refresh };
 }

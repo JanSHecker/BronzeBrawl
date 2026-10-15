@@ -6,6 +6,7 @@ import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import CreationPage from "./CreationPage/CreationPage";
 import LoLApiFeed from "./LoLApi/LolApi";
 import ReplaysPage from "./ReplaysPage/ReplaysPage";
+import { LiveFeedProvider } from "./LoLApi/LiveFeed";
 
 const router = createBrowserRouter([
   {
@@ -41,7 +42,7 @@ const router = createBrowserRouter([
 const Router = () => {
   return (
     <div className="min-h-screen flex flex-col items-center justify-evenly m-4">
-      <RouterProvider router={router} />
+      <LiveFeedProvider><RouterProvider router={router} /></LiveFeedProvider>
     </div>
   );
 };

@@ -8,7 +8,7 @@ vi.mock('axios', () => { const client = { get: vi.fn(), post: vi.fn(), intercept
 test('creation links to protected replay and companion entrypoint', () => {
   render(<CreationPage />);
   expect(screen.getByRole('link', { name: /Replays und Companion/ })).toHaveAttribute('href', '/replays');
-  expect(screen.getByText(/Direktmodus/)).toBeInTheDocument();
+  expect(screen.getByText(/ohne zusätzliches Verbinden/)).toBeInTheDocument();
 });
 
 test('real browser router serves /replays without fetching protected data', async () => {

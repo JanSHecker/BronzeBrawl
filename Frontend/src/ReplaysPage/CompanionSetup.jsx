@@ -4,11 +4,12 @@ export default function CompanionSetup() {
       <h2 id="companion-heading">Companion einrichten</h2>
       <ol>
         <li><a href="/downloads/bronze-brawl-companion.zip" download>Companion-Quellcode herunterladen (.zip)</a>, entpacken und die enthaltene README befolgen. Python 3.11 oder neuer ist erforderlich; dies ist kein fertiges Windows-Programm.</li>
-        <li>Companion lokal auf dem LoL-PC starten. Dann <a href="http://localhost:3002" target="_blank" rel="noopener noreferrer">Lokale Verwaltung öffnen (localhost:3002)</a>. Der Link wird nur auf Klick geöffnet, es gibt hier keine automatische Verbindung.</li>
-        <li>In der lokalen Verwaltung Server, Replay-Token und für den Live-Feed die bestehende Spiel-ID mit Host-Token einrichten. Host-Token und Replay-Token sind unterschiedliche Berechtigungen. Keine LoL-Anmeldedaten an den Server senden.</li>
+        <li><code>start.cmd</code> auf dem LoL-PC öffnen. Der Companion läuft im Terminal, nicht im Browser.</li>
+        <li><code>r</code> holt fremde Summoner’s-Rift-Replays des aktuellen Patches; Version und Match-Daten kommen automatisch aus LoL. Der lokale Live-Feed läuft sofort mit, ohne Spiel-ID oder Token-Eingabe. <code>q</code> beendet die App.</li>
       </ol>
-      <p><strong>Ein Feed-Modus zur Zeit:</strong> Companion-Direktmodus sendet ohne Browser-Tab. Den <a href="/lolApi">Browser-Relay / LoL-Monitor</a> nur alternativ öffnen, nachdem der Direktmodus deaktiviert wurde. Nie beide gleichzeitig betreiben; hier wird kein Feed aktiviert.</p>
-      <p>HTTPS-Seiten können localhost je nach Browser wegen Mixed Content, CORS oder lokalen Netzwerkberechtigungen blockieren. Die lokale Verwaltung deshalb unabhängig in einem eigenen Tab öffnen. Replay-Wiedergabe und Live-Daten hängen vom lokalen LoL-Client und der passenden Version ab; keine garantierte Datenverfügbarkeit.</p>
+      <p>Die Haupt-App holt den lokalen Live-Feed automatisch ab. Kein zusätzliches Verbinden im Companion und kein Pool-Token für lokale Replays nötig.</p>
+      <p>Gefundene Matches werden beim Companion-Start und nach dem Holen automatisch bewertet. Anzeige und Sortierung der Rankings erfolgen ausschließlich im Terminal: <code>l</code> zeigt die Liste, <code>s momentum</code> sortiert beispielsweise nach Momentum. Kein Server-Upload nötig.</p>
+      <p>Replay-Quelle: die öffentliche Challenger-Solo/Duo-Rangliste deiner LoL-Region. Geprüft werden die letzten 20 Spiele von bis zu fünf fremden Konten — nur Summoner’s Rift (Karte 11), aktueller Patch, keine eigenen Spiele. Einzelne Downloads können im Client nicht mehr verfügbar sein.</p>
     </section>
   );
 }

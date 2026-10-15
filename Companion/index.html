@@ -1,16 +1,50 @@
 <!doctype html>
-<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BronzeBrawl Companion</title><link rel="stylesheet" href="/style.css"><script src="/ui.js" defer></script></head>
-<body><main><header><h1>BronzeBrawl Companion</h1><p>Ein lokales Programm · Live-Daten und Replay-Verwaltung · nur auf diesem PC</p></header>
-<div id="notice" role="status" aria-live="polite">Verbindung wird hergestellt …</div>
-<section><h2>1 · Verbindung &amp; Paarung</h2><p>Tokens bleiben nur im Arbeitsspeicher. Leere Token-Felder behalten die bestehende Paarung. Backend-Adresse, League-Ordner und Refill-Ziel werden lokal gespeichert, aber nicht zurückgelesen. Nach einem Neustart Tokens und Spiel-ID erneut eingeben.</p>
-<form id="config"><label>Backend-API (HTTPS)<input name="backendUrl" type="url" value="https://bronze-brawl.janhec.de/api" required></label><label>Replay-Pool-Token<input name="poolToken" type="password" autocomplete="off" placeholder="X-Replay-Token (separat)"></label><label>BronzeBrawl-Spiel-ID<input name="gameId" type="number" min="1" step="1" placeholder="Optional, für Direkt-Feed / Reservierung"></label><label>Host-Spiel-Token<input name="hostToken" type="password" autocomplete="off" placeholder="X-Game-Token"></label><label>League-Installationsordner (optional)<input name="leagueDir" placeholder="C:\Riot Games\League of Legends"></label><label>Unreservierte Replays im Pool (Ziel)<input name="target" type="number" min="1" max="20" value="5" required></label><div class="buttons"><button>Paarung / Einstellungen übernehmen</button><button type="button" id="forget">Tokens vergessen &amp; stoppen</button></div></form>
-<p id="paired"></p></section>
-<section><h2>2 · Live-Daten</h2><p>Der Direkt-Feed sendet alle 3 Sekunden echte Daten von LoL an das gepaarte Spiel – unabhängig vom Browser. Nicht gleichzeitig das Browser-Relay verwenden. Für Replays ist die Liveclient-API <strong>nicht nachgewiesen</strong>. Es werden keine Events rekonstruiert oder erfunden.</p><div class="buttons"><button id="feedStart">Direkt-Feed starten</button><button id="feedStop">Stoppen</button><button id="probe">LoL-Daten prüfen</button></div><pre id="feedStatus"></pre></section>
-<section><h2>3 · Lokale Replay-Beschaffung</h2><p>League Client öffnen und einloggen. Entdeckung ist auf die letzten 20 Spiele dieses Kontos und den aktuellen Patch begrenzt. Downloads warten auf echte vollständige Dateien. <strong>Aktuelles ROFL2/RLR ist noch nicht unterstützt.</strong> Unterstützt wird ausschließlich der historische RIOT/ROFL1-Container mit überprüfter eingebetteter Version und Spielnummer; die Plattform wird aus der Zuordnung übernommen.</p><div class="buttons"><button id="discover">Letzte eigene Spiele entdecken</button><button id="scan">Client-Replay-Ordner einlesen</button><button id="refillOnce">Pool einmal auffüllen (max. 3)</button></div><label class="check"><input type="checkbox" id="refillToggle"> Hintergrund-Refill aktivieren (alle 5 Minuten, eigener Worker)</label><pre id="refillStatus"></pre><div id="candidates"></div>
-<form id="acquire"><h3>Match manuell im Client herunterladen</h3><label>Match-ID (Plattform_Spielnummer)<input name="matchId" placeholder="EUW1_123" required></label><label>Vollständige Spielversion<input name="gameVersion" placeholder="16.20.123.456" required></label><button>LCU-Download anfordern</button></form>
-<form id="import"><h3>Vorhandene .rofl-Datei importieren</h3><p>Browser-Dateiauswahl liest nur diese ausgewählte Datei. Keine frei eingegebenen Datei- oder Programmpfade. Identität und Version müssen mit dem Inhalt übereinstimmen.</p><label>Match-ID<input name="matchId" placeholder="EUW1_123" required></label><label>Spielversion<input name="gameVersion" placeholder="16.20.123.456" required></label><label>Lokale ROFL-Datei<input type="file" name="file" accept=".rofl" required></label><button>Datei in lokalen Cache importieren</button></form></section>
-<section><h2>4 · Lokaler Cache</h2><p>Maximal 150 MiB je Datei, 2 GiB Cache. Upload ist persistent pro Backend dedupliziert. Analyse und Scores berechnet ausschließlich der Server.</p><div id="localItems"></div></section>
-<section><h2>5 · Server-Pool &amp; vorbereitete Auswahl</h2><button id="serverRefresh">Server-Liste laden</button><p id="riotStatus"></p><div id="serverItems"></div>
-<form id="reserve"><h3>Vorbereitetes Replay reservieren &amp; laden</h3><p>Wählt ausschließlich vorbereitete, analysierte Replays. Keine Entdeckung während dieser Auswahl. Die Reservierung bleibt bei Download-/Clientfehlern erhalten; gezielt freigeben. Wiedergabe anschließend separat starten.</p><label>BronzeBrawl-Spiel-ID<input name="gameId" type="number" min="1" step="1" required></label><label>Client-Spielversion (leer: vom lokalen Client)<input name="gameVersion" placeholder="16.20.123.456"></label><label>Auswahl nach<select name="sortBy"><option value="overall">Gesamt</option><option value="balance">Balance</option><option value="carry">Carry</option><option value="momentum">Momentum</option></select></label><button>Reservieren &amp; herunterladen</button></form></section>
-<section><h2>Aufträge &amp; Fehler</h2><p>Ein Replay-Auftrag gleichzeitig; Direkt-Feed bleibt davon unabhängig. Wiedergabe erfolgt nur über die lokale LCU-Watch-API. Fehlen Client-Metadaten, wird ehrlich abgebrochen – kein Shell-Workaround.</p><div id="jobs"></div></section>
-<footer>Quellcode-Ausgabe für Windows mit Python 3.11+. Kein auf Windows getestetes EXE. Lokale League-/Replay-Funktionen benötigen einen kompatiblen League Client.</footer></main></body></html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>BronzeBrawl Companion</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/ui.js" defer></script>
+</head>
+<body>
+<main>
+  <header><h1>BronzeBrawl <span>Companion</span></h1></header>
+
+  <section aria-labelledby="replay-heading">
+    <h2 id="replay-heading">Replays holen</h2>
+    <p>Fremde Summoner’s-Rift-Replays des aktuellen Patches über die regionale Rangliste. Direkt in deinen Replay-Ordner.</p>
+    <button id="fetchReplays" disabled>Replays holen</button>
+    <p id="replayStatus" role="status" aria-live="polite">Companion wird verbunden …</p>
+    <ul id="replayFiles" hidden></ul>
+  </section>
+
+  <section aria-labelledby="live-heading">
+    <h2 id="live-heading">Livegame-Daten</h2>
+    <p id="feedStatus" role="status" aria-live="polite">Wartet auf die Verbindung …</p>
+    <p class="muted">Läuft automatisch im Hintergrund — auch wenn du dieses Fenster schließt.</p>
+  </section>
+
+  <details id="settings">
+    <summary>Einrichtung</summary>
+    <form id="config">
+      <p>Für Live-Daten einmal dein BronzeBrawl-Spiel verbinden. Für Replays ist das nicht nötig.</p>
+      <label for="gameId">Spiel-ID</label>
+      <input id="gameId" name="gameId" type="number" min="1" step="1" placeholder="Aus deinem BronzeBrawl-Spiel">
+      <label for="hostToken">Spiel-Schlüssel</label>
+      <input id="hostToken" name="hostToken" type="password" autocomplete="off" placeholder="Host-Token aus deinem Spiel">
+      <label for="backendUrl">Server</label>
+      <input id="backendUrl" name="backendUrl" type="url" value="https://bronze-brawl.de/api" required>
+      <label for="leagueDir">League-Ordner <span class="muted">(nur falls nicht automatisch gefunden)</span></label>
+      <input id="leagueDir" name="leagueDir" placeholder="C:\Riot Games\League of Legends">
+      <div class="actions">
+        <button id="saveConfig" type="submit">Übernehmen</button>
+        <button id="forget" type="button" class="quiet">Verbindung trennen</button>
+      </div>
+      <p class="muted">Der Spiel-Schlüssel bleibt nur bis zum Beenden der App gespeichert.</p>
+      <p id="configStatus" role="status" aria-live="polite"></p>
+    </form>
+  </details>
+</main>
+</body>
+</html>

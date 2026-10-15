@@ -22,7 +22,10 @@ test('public entry has explicit companion links but no requests or results befor
   expect(axios.get).not.toHaveBeenCalled();
   expect(screen.getByLabelText('Replay-Token')).toHaveAttribute('type', 'password');
   expect(screen.getByRole('link', { name: /Companion-Quellcode/ })).toHaveAttribute('href', '/downloads/bronze-brawl-companion.zip');
-  expect(screen.getByRole('link', { name: /Lokale Verwaltung/ })).toHaveAttribute('href', 'http://localhost:3002');
+  expect(screen.queryByRole('link', { name: /Lokale Verwaltung/ })).not.toBeInTheDocument();
+  expect(screen.getByText('start.cmd', { exact: true })).toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: 'Lokale Replay-Rankings' })).not.toBeInTheDocument();
+  expect(screen.getByText(/Anzeige und Sortierung der Rankings erfolgen ausschließlich im Terminal/)).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Reservieren' })).not.toBeInTheDocument();
 });
 
@@ -63,7 +66,7 @@ test('separate scores, null semantics, metrics, patch filtering and each score o
   expect(within(rows()[0]).getByText('Carry')).toBeInTheDocument(); expect(within(rows()[0]).getByText('92')).toBeInTheDocument();
   expect(within(rows()[0]).getByText('Momentum')).toBeInTheDocument(); expect(within(rows()[0].querySelector('.replay-scores')).getByText('Nicht verfügbar')).toBeInTheDocument();
   expect(within(rows()[2].querySelector('.replay-scores')).getAllByText('Nicht verfügbar')).toHaveLength(4);
-  expect(screen.getByText(/konfiguriert, nicht validiert/)).toBeInTheDocument(); expect(screen.getByText(/konzentrierte Spieler-Kills/)).toBeInTheDocument(); expect(screen.getByText(/Teilbewertung/)).toBeInTheDocument();
+  expect(screen.getByText(/konfiguriert, nicht validiert/)).toBeInTheDocument(); expect(screen.getByText(/konzentrierte Spieler-Kills/)).toBeInTheDocument(); expect(screen.getByText(/^Teilbewertung:/)).toBeInTheDocument();
   fireEvent.click(within(rows()[0]).getByText(/Metriken/)); expect(within(rows()[0]).getByText(/goldSwings/)).toBeInTheDocument();
   for (const [sort, first] of [['balance', 'EUW1_456'], ['carry', 'EUW1_123'], ['momentum', 'EUW1_456'], ['overall', 'EUW1_123']]) {
     fireEvent.change(screen.getByLabelText('Sortierung'), { target: { value: sort } }); expect(rows()[0].dataset.matchId).toBe(first); expect(rows()[2].dataset.matchId).toBe('NA1_789');

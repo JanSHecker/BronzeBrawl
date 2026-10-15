@@ -122,7 +122,7 @@ export default function ReplaysPage() {
 
   return (
     <main className="replays-page" lang="de">
-      <header><a href="/">Zur Spiel-Erstellung</a><h1>Replay-Verwaltung</h1><p>Geschützter Replay-Pool. Ergebnisse und Bewertungen werden erst nach erfolgreicher Anmeldung geladen.</p></header>
+      <header><a href="/">Zur Spiel-Erstellung</a><h1>Replay-Verwaltung</h1><p>Geschützter Server-Pool. Die lokalen Replay-Rankings werden ausschließlich im Companion-Terminal angezeigt und sortiert.</p></header>
       <CompanionSetup />
       {admin.error && <p role="alert" className="replay-error">{admin.error}</p>}
       {admin.notice && <p role="status">{admin.notice}</p>}

@@ -2,13 +2,17 @@ import axios from "axios";
 import { API_BASE_URL, GAME_ID_KEY } from "./constants";
 
 export const ACTIVE_SESSION_KEY = "bb:active";
+export const SESSION_EVENT = "bronzebrawl:session";
 export const hostTokenKey = gameId => `bb:host:${gameId}`;
 export const playerTokenKey = (gameId, playerId) => `bb:player:${gameId}:${playerId}`;
 export function readActiveSession() {
   try { return JSON.parse(sessionStorage.getItem(ACTIVE_SESSION_KEY)) || null; }
   catch { return null; }
 }
-export const writeActiveSession = session => sessionStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(session));
+export const writeActiveSession = session => {
+  sessionStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(session));
+  window.dispatchEvent(new Event(SESSION_EVENT));
+};
 export const getGameId = () => readActiveSession()?.gameId ?? localStorage.getItem(GAME_ID_KEY);
 export const getPlayerId = () => readActiveSession()?.playerId ?? localStorage.getItem("playerId");
 export function getPlayerToken() {

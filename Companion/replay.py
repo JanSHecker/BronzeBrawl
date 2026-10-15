@@ -14,6 +14,7 @@ import time
 import urllib.parse
 
 from network import MAX_FILE, RemoteError
+from ranking import score_match
 
 PLATFORMS = 'BR1 EUN1 EUW1 JP1 KR LA1 LA2 NA1 OC1 TR1 RU PH2 SG2 TH2 TW2 VN2 ME1'.split()
 MATCH = re.compile(r'(' + '|'.join(PLATFORMS) + r')_([1-9][0-9]{0,18})\Z')
@@ -34,6 +35,18 @@ def version(value):
     if not isinstance(value, str) or not VERSION.fullmatch(value):
         raise ReplayError('Vollständige Spielversion erforderlich (z.B. 16.20.123.456).')
     return value
+
+
+def client_version(value):
+    """Read the version LoL reports; +branch metadata is not part of the version."""
+    if isinstance(value, dict):
+        value = value.get('version') or value.get('gameVersion')
+    if isinstance(value, str):
+        value = value.strip().split('+', 1)[0]
+    try:
+        return version(value)
+    except ReplayError:
+        raise ReplayError('Spielversion vom League Client noch nicht verfügbar. Client geöffnet lassen und erneut versuchen.') from None
 
 
 def patch_of(value):
@@ -175,6 +188,9 @@ class LCU:
         self.league_dir = Path(league_dir) if league_dir else None
 
     def lockfile(self):
+        cached = getattr(self, '_lockfile', None)
+        if cached and cached.is_file() and not cached.is_symlink():
+            return cached
         roots = [self.league_dir] if self.league_dir else []
         if not self.league_dir:
             roots += [Path('C:/Riot Games/League of Legends')]
@@ -193,6 +209,7 @@ class LCU:
             if root and not str(root).startswith(('\\\\', '//')):
                 p = root / 'lockfile'
                 if p.is_file() and not p.is_symlink():
+                    self._lockfile = p
                     return p
         raise ReplayError('League Client nicht gefunden. Einloggen oder League-Installationsordner angeben.')
 
@@ -213,9 +230,7 @@ class LCU:
 
     def current_version(self):
         result = self.request('GET', '/lol-patch/v1/game-version')
-        if isinstance(result, dict):
-            result = result.get('version')
-        return version(result)
+        return client_version(result)
 
     def replay_dir(self):
         try:
@@ -235,26 +250,84 @@ class LCU:
     def discover(self, limit=20):
         current = self.current_version()
         summoner = self.request('GET', '/lol-summoner/v1/current-summoner')
-        puuid = summoner.get('puuid') if isinstance(summoner, dict) else None
-        if not isinstance(puuid, str) or not re.fullmatch(r'[A-Za-z0-9_-]{10,200}', puuid):
+        own_puuid = summoner.get('puuid') if isinstance(summoner, dict) else None
+        if not isinstance(own_puuid, str) or not re.fullmatch(r'[A-Za-z0-9_-]{10,200}', own_puuid):
             raise ReplayError('Aktuelles Konto nicht verfügbar.')
-        route = '/lol-match-history/v1/products/lol/' + urllib.parse.quote(puuid, safe='') + '/matches?begIndex=0&endIndex=19'
-        history = self.request('GET', route)
-        games = history.get('games', {}) if isinstance(history, dict) else {}
-        entries = games.get('games', []) if isinstance(games, dict) else games
+        # The local account identifies the region and is excluded, never used as
+        # a replay source. Public ladder entries supply foreign match histories.
+        ladder = self.request('GET', '/lol-ranked/v1/apex-leagues/RANKED_SOLO_5x5/CHALLENGER')
+        divisions = ladder.get('divisions', []) if isinstance(ladder, dict) else []
+        players = []
+        for division in divisions if isinstance(divisions, list) else []:
+            if not isinstance(division, dict):
+                continue
+            standings = division.get('standings', [])
+            for entry in standings if isinstance(standings, list) else []:
+                puuid = entry.get('puuid') if isinstance(entry, dict) else None
+                if isinstance(puuid, str) and re.fullmatch(r'[A-Za-z0-9_-]{10,200}', puuid) and puuid != own_puuid and puuid not in players:
+                    players.append(puuid)
+        if not players:
+            raise ReplayError('Keine fremden Spieler über die öffentliche Rangliste verfügbar. Der eigene Verlauf wird nicht verwendet.')
+        entries = []; failure = None; histories = 0
+        for puuid in players[:5]:
+            route = '/lol-match-history/v1/products/lol/' + urllib.parse.quote(puuid, safe='') + '/matches?begIndex=0&endIndex=19'
+            try:
+                history = self.request('GET', route)
+            except RemoteError as exc:
+                failure = exc
+                continue
+            games = history.get('games', {}) if isinstance(history, dict) else {}
+            games = games.get('games', []) if isinstance(games, dict) else games
+            if isinstance(games, list):
+                histories += 1
+                entries.extend(games[:max(0, min(limit, 20))])
+        if not histories and failure:
+            raise ReplayError('Fremde Match-Verläufe sind momentan nicht verfügbar. Bitte später erneut versuchen.') from None
         result = []
-        for entry in entries[:min(limit, 20)]:
-            if not isinstance(entry, dict):
+        seen = set()
+        for entry in entries:
+            if not isinstance(entry, dict) or entry.get('mapId') != 11:
+                continue
+            identities = entry.get('participantIdentities', [])
+            if not isinstance(identities, list):
+                continue
+            if any(isinstance(p, dict) and isinstance(p.get('player'), dict) and p['player'].get('puuid') == own_puuid for p in identities):
                 continue
             try:
-                v = version(entry.get('gameVersion'))
+                v = client_version(entry.get('gameVersion'))
                 platform = str(entry.get('platformId', '')).upper()
                 identity = match_id(platform + '_' + str(entry.get('gameId', '')))
-                if patch_of(v) == patch_of(current):
-                    result.append({'matchId': identity, 'gameVersion': v})
+                if patch_of(v) == patch_of(current) and identity not in seen:
+                    result.append({'matchId': identity, 'gameVersion': v, 'mapId': 11})
+                    seen.add(identity)
             except ReplayError:
                 continue
         return result
+
+    def analyze(self, identity, own_puuid, current_version):
+        gid = match_id(identity).split('_')[1]
+        game = self.request('GET', '/lol-match-history/v1/games/' + gid)
+        if not isinstance(game, dict) or str(game.get('gameId')) != gid or str(game.get('platformId', '')).upper() != identity.split('_')[0] or game.get('mapId') != 11:
+            raise ReplayError('Keine passenden Summoner’s-Rift-Matchdaten verfügbar.')
+        v = client_version(game.get('gameVersion'))
+        if patch_of(v) != patch_of(current_version):
+            raise ReplayError('Replay ist nicht vom aktuellen Client-Patch.')
+        identities = game.get('participantIdentities')
+        if not isinstance(own_puuid, str) or not own_puuid or not isinstance(identities, list) or len(identities) != 10:
+            raise ReplayError('Spielerzuordnung für den Ausschluss eigener Spiele fehlt.')
+        if any(not isinstance(p, dict) or not isinstance(p.get('player'), dict) or not p['player'].get('puuid') or p['player']['puuid'] == own_puuid for p in identities):
+            raise ReplayError('Eigene Spiele oder unvollständige Spielerzuordnung werden nicht bewertet.')
+        timeline = None
+        try:
+            timeline = self.request('GET', '/lol-match-history/v1/game-timelines/' + gid)
+        except RemoteError:
+            pass
+        try:
+            scores = score_match(game, timeline)
+        except ValueError as exc:
+            raise ReplayError(str(exc)) from None
+        return {'matchId': identity, 'gameVersion': v, 'patch': patch_of(v), 'mapId': 11,
+                'analysisStatus': 'ready', 'scores': scores}
 
     def ensure_metadata(self, identity, game_version):
         gid = match_id(identity).split('_')[1]
@@ -265,7 +338,7 @@ class LCU:
                 raise
         # Retrieve real game details instead of inventing queue/type metadata.
         game = self.request('GET', '/lol-match-history/v1/games/' + gid)
-        if not isinstance(game, dict) or game.get('gameVersion') != game_version or str(game.get('platformId', '')).upper() != identity.split('_')[0] or str(game.get('gameId')) != gid:
+        if not isinstance(game, dict) or client_version(game.get('gameVersion')) != game_version or str(game.get('platformId', '')).upper() != identity.split('_')[0] or str(game.get('gameId')) != gid:
             raise ReplayError('LCU-Metadaten für dieses Server-Replay fehlen; keine erfundenen Metadaten oder Shell-Starts.')
         game_type, queue = game.get('gameType'), game.get('queueId')
         if not isinstance(game_type, str) or not re.fullmatch('[A-Z_]{1,40}', game_type) or not isinstance(queue, int) or queue < 0:
@@ -274,7 +347,7 @@ class LCU:
         self.request('POST', route)
         return self.request('GET', '/lol-replays/v1/metadata/' + gid)
 
-    def acquire(self, cache, identity, game_version, cancel=None, timeout=120):
+    def _download_path(self, identity, game_version, cancel=None, timeout=120):
         gid = match_id(identity).split('_')[1]; version(game_version)
         if patch_of(self.current_version()) != patch_of(game_version):
             raise ReplayError('Replay ist nicht vom aktuellen Client-Patch.')
@@ -291,11 +364,25 @@ class LCU:
                 for filename in (identity + '.rofl', identity.replace('_', '-') + '.rofl'):
                     path = directory / filename
                     if path.is_file() and not path.is_symlink():
-                        # Envelope total length and atomic copy reject a still-partial file.
-                        return cache.add(path, identity, game_version)
+                        size = path.stat().st_size
+                        if 0 < size <= MAX_FILE:
+                            return path
+                        if size > MAX_FILE:
+                            raise ReplayError('Replay ist größer als 150 MiB.')
             if cancel.wait(2):
                 break
         raise ReplayError('Download nicht vollständig (abgebrochen oder Zeitlimit 120 Sekunden).')
+
+    def download(self, identity, game_version=None, cancel=None, timeout=120):
+        # League's completed-download state is authoritative. Pass through its
+        # original .rofl file, including modern formats; do not decode events.
+        game_version = self.current_version() if game_version is None else client_version(game_version)
+        path = self._download_path(identity, game_version, cancel, timeout)
+        return {'matchId': identity, 'gameVersion': game_version, 'filename': path.name}
+
+    def acquire(self, cache, identity, game_version, cancel=None, timeout=120):
+        path = self._download_path(identity, game_version, cancel, timeout)
+        return cache.add(path, identity, game_version)
 
     def watch(self, cache, identity):
         item = cache.get(identity)

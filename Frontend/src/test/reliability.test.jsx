@@ -72,6 +72,6 @@ test('creation rejects HTML success responses visibly and re-enables submit',asy
 test('name submit failure resets pending and keeps session token out of localStorage',async()=>{
   axios.post.mockRejectedValueOnce(new Error('offline')); render(<NameForm/>); fireEvent.change(screen.getByRole('textbox'),{target:{value:'Alex'}}); fireEvent.click(screen.getByRole('button',{name:'START'})); await act(async()=>{}); expect(screen.getByRole('alert')).toHaveTextContent(/offline|failed/i); expect(screen.getByRole('button',{name:'START'})).toBeEnabled();
 });
-test('monitor requires explicit game and host capability, never says ready based on proxy only',async()=>{
-  window.history.replaceState({},'', '/lolApi?gameId=5'); render(<LoLApiFeed/>); await act(async()=>{}); expect(screen.getByRole('alert')).toHaveTextContent(/host|token|capability/i); expect(screen.queryByText(/Ready to Go/)).not.toBeInTheDocument(); expect(axios.post).not.toHaveBeenCalled();
+test('monitor describes the automatic feed without asking for tokens or pairing',async()=>{
+  window.history.replaceState({},'', '/lolApi'); render(<LoLApiFeed/>); await act(async()=>{}); expect(screen.getByText(/Der Live-Feed startet dann automatisch/)).toBeInTheDocument(); expect(screen.queryByRole('textbox')).not.toBeInTheDocument(); expect(axios.post).not.toHaveBeenCalled();
 });

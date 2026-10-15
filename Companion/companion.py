@@ -16,10 +16,19 @@ import webbrowser
 
 from network import MAX_FILE, Network, RemoteError, validate_backend
 from replay import Cache, LCU, ReplayError, atomic_json, match_id, patch_of, version
+from ranking import RANKING_VERSION, sort_rankings, valid_ranking
 
-DEFAULT_BACKEND = 'https://bronze-brawl.janhec.de/api'
-PUBLIC_ORIGIN = 'https://bronze-brawl.janhec.de'
+DEFAULT_BACKEND = 'https://bronze-brawl.de/api'
+PUBLIC_ORIGINS = frozenset(('https://bronze-brawl.de', 'https://bronze-brawl.janhec.de',
+                            'http://localhost:5173', 'http://127.0.0.1:5173'))
 STATIC = Path(__file__).resolve().parent
+RANKING_LABELS = {'kills': 'Kills-Verhältnis', 'gold': 'Gold-Verhältnis', 'carry': 'Carry', 'momentum': 'Momentum'}
+TERMINAL_HELP = 'r = Replays holen | l = Rankings anzeigen | s = Sortierung | q = Beenden'
+SORT_HELP = 'Sortieren: s kills | s gold | s carry | s momentum (optional: auf/ab)'
+
+
+class LiveUnavailable(ReplayError):
+    pass
 
 
 def positive_id(value):
@@ -48,6 +57,16 @@ class App:
         self.feed = {'enabled': False, 'error': None, 'sent': 0, 'failures': 0, 'lastSuccess': None, 'availability': 'nicht geprüft'}
         self.refill = {'enabled': False, 'error': None, 'lastCheck': None, 'compatibleUnreserved': None}
         self.jobs = {}; self.job_queue = queue.Queue(maxsize=8); self.candidates = []
+        self.ranking_lock = threading.Lock()
+        self.ranking_state = {'items': [], 'running': False, 'updatedAt': None, 'skipped': 0, 'error': None}
+        self.ranking_account = None
+        try:
+            saved_rankings = json.loads((self.root / 'rankings.json').read_text(encoding='utf-8'))
+            if isinstance(saved_rankings.get('items'), list) and len(saved_rankings['items']) <= 500 and all(valid_ranking(item) for item in saved_rankings['items']):
+                self.ranking_state.update(items=saved_rankings['items'], updatedAt=saved_rankings.get('updatedAt'))
+                self.ranking_account = saved_rankings.get('account')
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
         self.sessions = {}
         try:
             saved = json.loads((self.root / 'settings.json').read_text(encoding='utf-8'))
@@ -67,9 +86,11 @@ class App:
     def configure(self, data):
         if not isinstance(data, dict):
             raise ValueError('JSON-Objekt erforderlich.')
-        with self.lock:
-            if self.feed['enabled'] or self.replay_lock.locked():
-                raise ReplayError('Vor Änderungen Direkt-Feed stoppen und Replay-Auftrag abwarten.')
+        # Wait for a previous tick before changing its destination/capability.
+        # The user never has to stop/start the passive feed to change settings.
+        with self.feed_lock, self.lock:
+            if self.replay_lock.locked():
+                raise ReplayError('Replays werden gerade geholt. Bitte kurz abwarten.')
             backend = validate_backend(data.get('backendUrl', self.backend), self.allow_http_local)
             gid = positive_id(data['gameId']) if 'gameId' in data else self.game_id
             target = data.get('target', self.target)
@@ -82,7 +103,11 @@ class App:
                 value = data.get(key, '')
                 if not isinstance(value, str) or len(value) > 4096 or any(ord(c) < 32 or ord(c) > 126 for c in value):
                     raise ValueError('Token ungültig.')
-            # Blank fields retain current memory-only tokens. Explicit forget clears all.
+            # Blank fields retain capabilities only for the same destination/game.
+            if backend != self.backend:
+                self.host_token = ''; self.pool_token = ''
+            if gid != self.game_id:
+                self.host_token = ''
             self.backend = backend; self.game_id = gid; self.target = target; self.league_dir = league
             if data.get('poolToken'):
                 self.pool_token = data['poolToken']
@@ -90,6 +115,8 @@ class App:
                 self.host_token = data['hostToken']
             self.lcu = LCU(self.network, league)
             atomic_json(self.root / 'settings.json', {'backendUrl': backend, 'leagueDir': league, 'target': target})
+            self.feed.update(enabled=bool(self.game_id and self.host_token), error=None, failures=0, lastSuccess=None)
+        self.feed_wake.set()
         return {'ok': True}
 
     def forget(self):
@@ -113,7 +140,7 @@ class App:
         except RemoteError:
             with self.lock:
                 self.feed['availability'] = 'nicht verfügbar (LoL/Replay stellt keine Liveclient-Daten bereit)'
-            raise ReplayError('LoL-Live-Daten nicht verfügbar. Spiel starten; Replay-Unterstützung ist unbewiesen.') from None
+            raise LiveUnavailable('Live-Daten sind noch nicht verfügbar. Warte auf ein laufendes Spiel.') from None
         if not isinstance(data, dict) or not isinstance(data.get('gameData'), dict) or not isinstance(data.get('allPlayers'), list):
             raise ReplayError('LoL liefert keine unterstützten Live-Daten.')
         with self.lock:
@@ -155,7 +182,7 @@ class App:
                 previous = self.sessions.get(key)
                 if previous and (previous.get('identity') != identity or clock < previous.get('clock', 0)):
                     with self.lock:
-                        self.feed.update(enabled=False, error='Zeit-Rücksprung oder Spielidentität geändert. Dasselbe Spiel wird nicht neu etikettiert; Host muss eine neue Spielsession anlegen.')
+                        self.feed.update(enabled=False, error='Spiel gewechselt oder Zeit zurückgesetzt. Bitte ein neues Spiel verbinden.')
                     return 3
                 if previous and clock == previous.get('clock'):
                     return 3
@@ -172,7 +199,7 @@ class App:
             except RemoteError as e:
                 with self.lock:
                     if e.status in (401, 403, 409) or (400 <= e.status < 500 and e.status != 429):
-                        self.feed.update(enabled=False, error=f'Direkt-Feed gestoppt (HTTP {e.status}); Paarung/Host-Spiel prüfen. Kein automatisches Neuverbinden dieser Session.')
+                        self.feed.update(enabled=False, error=f'Spielverbindung ungültig (HTTP {e.status}). Bitte Spiel-ID und Schlüssel erneut verbinden.')
                         return 3
                 return self._feed_failure(e)
             except (ReplayError, OSError, ValueError, KeyError, TypeError) as e:
@@ -182,11 +209,13 @@ class App:
 
     def _feed_failure(self, exc):
         with self.lock:
+            if isinstance(exc, LiveUnavailable):
+                self.feed.update(failures=0, error=None, lastSuccess=None)
+                return 3  # A closed game is a normal idle state, not an outage.
             failures = self.feed['failures'] + 1
             self.feed.update(failures=failures, error=safe_error(exc))
-            if failures >= 6:
-                self.feed['enabled'] = False
-                self.feed['error'] += ' Nach 6 Versuchen pausiert; manuell erneut starten.'
+            # No game/client or a temporary outage is normal for a passive app.
+            # Keep waiting with bounded backoff; never require a manual restart.
         return min(60, 3 * 2 ** min(failures, 5))
 
     def _pool(self, method, route, body=None, extra=None):
@@ -251,7 +280,102 @@ class App:
         result = self.lcu.discover()
         with self.lock:
             self.candidates = result
-        return {'items': result, 'boundary': 'Nur letzte 20 Spiele des aktuell lokal eingeloggten Kontos, gleicher Patch. Kein globaler Replay-Dienst.'}
+        return {'items': result, 'boundary': 'Fremde Spieler aus der Challenger-Rangliste deiner Region: letzte 20 Spiele von bis zu fünf Konten, nur Summoner’s Rift und aktueller Patch. Kein eigener Verlauf.'}
+
+    def fetch_replays(self):
+        """Download foreign, current-patch Summoner's Rift matches via League.
+
+        These remain original client files. No pool credentials, upload,
+        reservation, playback or replay-format parsing is involved.
+        """
+        client = self.lcu
+        candidates = client.discover()
+        if not candidates:
+            return {'items': [], 'message': 'Keine fremden Summoner’s-Rift-Replays vom aktuellen Patch gefunden.'}
+        items = []; errors = []
+        for candidate in candidates:
+            if self.stop_event.is_set():
+                break
+            try:
+                items.append(client.download(candidate['matchId'], candidate['gameVersion'], self.stop_event))
+            except (ReplayError, RemoteError, OSError, ValueError, KeyError, TypeError) as exc:
+                errors.append(safe_error(exc))
+        if not items and errors:
+            raise ReplayError(errors[0])
+        message = f'{len(items)} Replay' + ('s' if len(items) != 1 else '') + ' im League-Replay-Ordner bereit.'
+        if errors:
+            message += f' {len(errors)} nicht verfügbar.'
+        rankings = self.rank_replays(candidates)
+        return {'items': items, 'message': message, 'rankings': rankings}
+
+    def rankings(self):
+        with self.lock:
+            result = dict(self.ranking_state)
+            result['items'] = sort_rankings(result['items'])
+            return result
+
+    def rank_replays(self, candidates=None):
+        """Rank discovered foreign matches independently of slow file downloads."""
+        with self.ranking_lock:
+            with self.lock:
+                self.ranking_state.update(running=True, error=None, skipped=0)
+            try:
+                client = self.lcu
+                current = client.current_version()
+                candidates = client.discover() if candidates is None else candidates
+                summoner = client.request('GET', '/lol-summoner/v1/current-summoner')
+                own = summoner.get('puuid') if isinstance(summoner, dict) else None
+                if not isinstance(own, str) or not own:
+                    raise ReplayError('Aktuelles Konto für den Ausschluss eigener Spiele nicht verfügbar.')
+                account = hashlib.sha256(own.encode()).hexdigest()
+                directory = client.replay_dir()
+                cached = {item['matchId']: item for item in self.rankings()['items']} if account == self.ranking_account else {}
+                files = {}
+                for path in sorted(directory.glob('*.rofl'))[:500]:
+                    try:
+                        identity = match_id(path.stem.replace('-', '_'))
+                        if path.is_symlink() or not path.is_file() or not 0 < path.stat().st_size <= MAX_FILE:
+                            continue
+                        files[identity] = path
+                    except (ReplayError, OSError):
+                        continue
+                items = []
+                with self.lock:
+                    self.ranking_state['items'] = []
+                self.ranking_account = account
+                for candidate in candidates:
+                    if self.stop_event.is_set():
+                        break
+                    try:
+                        identity = match_id(candidate['matchId'])
+                        path = files.get(identity)
+                        stat = path.stat() if path else None
+                        size = stat.st_size if stat else None
+                        mtime = stat.st_mtime_ns if stat else None
+                        old = cached.get(identity)
+                        if old and old.get('patch') == patch_of(current) and old.get('scores', {}).get('version') == RANKING_VERSION and not old['scores']['metrics'].get('partial', True):
+                            item = dict(old)
+                        else:
+                            item = client.analyze(identity, own, current)
+                        if not valid_ranking(item) or item['matchId'] != identity:
+                            raise ReplayError('Ungültige Bewertung des League-Clients.')
+                        item.update(downloaded=path is not None, filename=path.name if path else None, sizeBytes=size, mtimeNs=mtime)
+                        items.append(item)
+                        with self.lock:
+                            self.ranking_state.update(items=list(items), updatedAt=int(time.time()))
+                    except (ReplayError, RemoteError, OSError, ValueError, KeyError, TypeError):
+                        with self.lock:
+                            self.ranking_state['skipped'] += 1
+                with self.lock:
+                    self.ranking_state.update(updatedAt=int(time.time()))
+                atomic_json(self.root / 'rankings.json', {**self.rankings(), 'account': account})
+            except (ReplayError, RemoteError, OSError, ValueError, KeyError, TypeError) as exc:
+                with self.lock:
+                    self.ranking_state['error'] = safe_error(exc)
+            finally:
+                with self.lock:
+                    self.ranking_state['running'] = False
+            return self.rankings()
 
     def scan(self):
         directory = self.lcu.replay_dir()
@@ -317,7 +441,7 @@ class App:
         return {'ok': True}
 
     def enqueue(self, action, data):
-        actions = {'discover', 'scan', 'acquire', 'upload', 'server-download', 'watch', 'reserve', 'refill', 'analyze', 'release', 'delete-local'}
+        actions = {'fetch-replays', 'discover', 'scan', 'acquire', 'upload', 'server-download', 'watch', 'reserve', 'refill', 'analyze', 'release', 'delete-local'}
         if action not in actions:
             raise ReplayError('Unbekannter Auftrag.')
         # Validate identities before placing anything in queue.
@@ -326,6 +450,10 @@ class App:
         if action == 'acquire':
             version(data.get('gameVersion'))
         with self.lock:
+            if action == 'fetch-replays':
+                existing = next((job for job in self.jobs.values() if job['action'] == action and job['state'] in ('queued', 'running')), None)
+                if existing:
+                    return {'jobId': existing['id']}
             if self.job_queue.full():
                 raise ReplayError('Auftragswarteschlange voll (maximal 8).')
             jid = secrets.token_hex(8)
@@ -340,6 +468,7 @@ class App:
 
     def run_job(self, action, data):
         identity = data.get('matchId')
+        if action == 'fetch-replays': return self.fetch_replays()
         if action == 'discover': return self.discover()
         if action == 'scan': return self.scan()
         if action == 'acquire': return self.lcu.acquire(self.cache, identity, data['gameVersion'], self.stop_event)
@@ -353,12 +482,16 @@ class App:
         if action == 'delete-local': self.cache.delete(identity); return {'ok': True}
         raise ReplayError('Unbekannter Auftrag.')
 
-    def start_workers(self):
+    def start_workers(self, feed_only=False, on_feed=None):
         if self.workers:
             return
         def feed_worker():
             while not self.stop_event.is_set():
                 delay = self.feed_tick()
+                if on_feed is not None:
+                    with self.lock:
+                        snapshot = dict(self.feed)
+                    on_feed(snapshot)
                 self.feed_wake.wait(delay); self.feed_wake.clear()
         def replay_worker():
             while not self.stop_event.is_set():
@@ -380,11 +513,15 @@ class App:
                     except Exception as exc:
                         with self.lock: self.refill['error'] = safe_error(exc)
                     finally: self.replay_lock.release()
-        for name, target in [('feed', feed_worker), ('jobs', replay_worker), ('refill', refill_worker)]:
+        workers = [('feed', feed_worker)]
+        if not feed_only:
+            workers += [('jobs', replay_worker), ('refill', refill_worker)]
+        for name, target in workers:
             thread = threading.Thread(target=target, name='companion-' + name, daemon=True)
             self.workers.append(thread); thread.start()
 
     def close(self):
+        self.feed_stop()
         self.stop_event.set(); self.feed_wake.set(); self.refill_wake.set()
         for worker in self.workers:
             worker.join(timeout=2)
@@ -393,9 +530,9 @@ class App:
 class CompanionServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = False
-    def __init__(self, address, app):
+    def __init__(self, address, app, handler=None):
         self.app = app
-        super().__init__(address, Handler)
+        super().__init__(address, handler or Handler)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -414,8 +551,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Cross-Origin-Resource-Policy', 'cross-origin' if cors else 'same-origin')
         self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; connect-src 'self'")
         self.send_header('Connection', 'close'); self.close_connection = True
-        if cors and self.headers.get('Origin') == PUBLIC_ORIGIN:
-            self.send_header('Access-Control-Allow-Origin', PUBLIC_ORIGIN)
+        if cors and self.headers.get('Origin') in PUBLIC_ORIGINS:
+            self.send_header('Access-Control-Allow-Origin', self.headers['Origin'])
             self.send_header('Vary', 'Origin')
             self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
             self.send_header('Access-Control-Allow-Private-Network', 'true')
@@ -431,9 +568,9 @@ class Handler(BaseHTTPRequestHandler):
         legacy = self.path in ('/health', '/lol-data') and self.command in ('GET', 'OPTIONS')
         if len(self.headers.get_all('Host', [])) != 1 or host not in hosts:
             self.reply(403, {'error': 'Host nicht erlaubt.'}); return False
-        if origin is not None and origin != 'http://' + host and not (legacy and origin == PUBLIC_ORIGIN):
+        if origin is not None and origin != 'http://' + host and not (legacy and origin in PUBLIC_ORIGINS):
             self.reply(403, {'error': 'Origin nicht erlaubt.'}); return False
-        if self.headers.get('Sec-Fetch-Site') == 'cross-site' and not (legacy and origin == PUBLIC_ORIGIN):
+        if self.headers.get('Sec-Fetch-Site') == 'cross-site' and not (legacy and origin in PUBLIC_ORIGINS):
             self.reply(403, {'error': 'Fremde Website nicht erlaubt.'}); return False
         if '?' in self.path or '#' in self.path or '%' in self.path:
             self.reply(400, {'error': 'Keine Query oder kodierten Pfade erlaubt.'}); return False
@@ -459,14 +596,16 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == '/health':
                 self.reply(200, {'status': 'ok', 'directFeedEnabled': app.feed['enabled']}, cors=True); return
             if self.path == '/lol-data':
-                if self.headers.get('Origin') == PUBLIC_ORIGIN and app.feed['enabled']:
+                if self.headers.get('Origin') in PUBLIC_ORIGINS and app.feed['enabled']:
                     self.reply(409, {'error': 'Direkt-Feed aktiv; Browser-Relay deaktivieren.'}, cors=True); return
                 try: data = app.live_data()
                 except ReplayError as e:
                     self.reply(503, {'error': str(e)}, cors=True); return
                 self.reply(200, data, cors=True); return
             if self.path == '/api/bootstrap':
-                self.reply(200, {'token': app.token}); return
+                with app.lock:
+                    settings = {'backendUrl': app.backend, 'leagueDir': app.league_dir, 'gameId': app.game_id}
+                self.reply(200, {'token': app.token, 'settings': settings}); return
             if self.path == '/api/status':
                 self.reply(200, app.status()); return
             if self.path == '/api/server-replays':
@@ -545,13 +684,158 @@ def create_server(app, port=3002):
     return CompanionServer(('127.0.0.1', port), app)
 
 
+class LiveFeedHandler(Handler):
+    """Read-only LoL feed. No browser UI, game pairing or management API."""
+    def do_GET(self):
+        if not self.gate():
+            return
+        if self.path == '/health':
+            self.reply(200, {'status': 'ok'}, cors=True)
+        elif self.path == '/lol-data':
+            try:
+                data = self.server.app.live_data()
+            except ReplayError as exc:
+                self.reply(503, {'error': str(exc)}, cors=True)
+                return
+            self.reply(200, data, cors=True)
+        else:
+            self.reply(404, {'error': 'Nur der lokale Live-Feed ist verfügbar: /lol-data'})
+
+    def do_POST(self):
+        if self.gate():
+            self.reply(405, {'error': 'Der Live-Feed ist nur lesbar.'})
+
+
+def create_feed_server(app, port=3002):
+    return CompanionServer(('127.0.0.1', port), app, LiveFeedHandler)
+
+
+def format_team_ratio(measure):
+    def number(value):
+        return str(int(value)) if value == int(value) else str(value).replace('.', ',')
+    value = 'nicht verfügbar' if measure['ratio'] is None else f"{measure['ratio']:.2f}".replace('.', ',')
+    return f"{number(measure['smaller'])} / {number(measure['larger'])} = {value}"
+
+
+def print_rankings(rankings, output_fn, sort_by='kills', descending=True):
+    items = sort_rankings(rankings['items'], sort_by, descending)
+    direction = 'absteigend' if descending else 'aufsteigend'
+    output_fn(f'\nReplay-Ranking ({RANKING_LABELS[sort_by]} {direction})')
+    output_fn(f"{'Rang':>4} {'Match':<20} {'Kills (klein / groß)':>22} {'Gold am Ende (klein / groß)':>29} {'Carry':>8} {'Momentum':>8}  Datei")
+    for index, item in enumerate(items, 1):
+        scores = item['scores']
+        values = [('–' if scores[key] is None else f'{scores[key]:.2f}').rjust(8) for key in ('carry', 'momentum')]
+        rank = str(index) if scores[sort_by] is not None else '–'
+        kills = format_team_ratio(scores['metrics']['killsRatio'])
+        gold = format_team_ratio(scores['metrics']['goldRatio'])
+        output_fn(f"{rank:>4} {item['matchId']:<20} {kills:>22} {gold:>29}" + ''.join(values) + ('  lokal' if item.get('downloaded') else '  noch nicht geladen'))
+    if not items:
+        output_fn('Noch keine bewertbaren fremden Summoner’s-Rift-Matches gefunden.')
+    if rankings.get('running'):
+        output_fn('Bewertungen werden im Hintergrund aktualisiert.')
+    if rankings.get('error'):
+        output_fn(rankings['error'])
+    if rankings.get('skipped'):
+        output_fn(f"{rankings['skipped']} Matches ausgeschlossen oder Matchdaten nicht verfügbar.")
+    output_fn('Kills und Gold: kleinerer / größerer Teamwert; 1,00 = gleich, 0,50 = halb so viel. 0 / 0 ist nicht verfügbar.')
+    output_fn('Gold = Summe goldEarned je Team am Spielende. Carry/Momentum: 0–100; ohne Timeline bleibt Momentum nicht verfügbar (–).')
+    output_fn(SORT_HELP)
+    output_fn('Beispiel: s gold auf = Gold-Verhältnis aufsteigend; ohne auf/ab wird absteigend sortiert.')
+    output_fn(TERMINAL_HELP)
+
+
+def run_terminal(app, input_fn=None, output_fn=None, port=3002):
+    """Replays on demand; the local feed is available from startup, unpaired."""
+    input_fn = input if input_fn is None else input_fn
+    output_fn = print if output_fn is None else output_fn
+    try:
+        server = create_feed_server(app, port)
+    except OSError:
+        output_fn('Port 3002 wird bereits verwendet. Einen anderen Companion oder LoL-Proxy zuerst beenden.')
+        app.close()
+        return 1
+    worker = threading.Thread(target=lambda: server.serve_forever(poll_interval=0.25), name='companion-live-feed', daemon=True)
+    worker.start()
+    output_fn('BronzeBrawl Companion')
+    output_fn(f'Live-Feed bereit: http://127.0.0.1:{server.server_port}/lol-data')
+    output_fn(TERMINAL_HELP)
+    output_fn(SORT_HELP)
+    display_lock = threading.RLock()
+    sort_by = 'kills'; descending = True
+    def show_rankings(rankings=None):
+        with display_lock:
+            print_rankings(app.rankings() if rankings is None else rankings, output_fn, sort_by, descending)
+    if app.rankings()['items']:
+        show_rankings()
+    def rank_existing():
+        rankings = app.rank_replays()
+        if not app.stop_event.is_set():
+            show_rankings(rankings)
+    ranking_worker = threading.Thread(target=rank_existing, name='companion-rankings', daemon=True)
+    app.workers.append(ranking_worker)
+    ranking_worker.start()
+    try:
+        while True:
+            command = input_fn('\n> ').strip().lower()
+            if command in ('q', 'quit', 'exit'):
+                break
+            try:
+                if command in ('r', 'replays'):
+                    output_fn('Suche fremde Summoner’s-Rift-Replays über die Rangliste deiner Region. Patch wird automatisch erkannt ...')
+                    result = app.fetch_replays()
+                    output_fn(result['message'])
+                    for item in result['items']:
+                        output_fn('  ' + item['filename'])
+                    if 'rankings' in result:
+                        show_rankings(result['rankings'])
+                elif command in ('l', 'liste', 'rankings'):
+                    show_rankings()
+                elif command == 's' or command.startswith('s '):
+                    selection = command[1:].strip() or input_fn('Sortierung (kills/gold/carry/momentum, optional auf/ab): ').strip().lower()
+                    parts = selection.split()
+                    key = {key: key for key in RANKING_LABELS}.get(parts[0]) if parts else None
+                    order = parts[1] if len(parts) == 2 else 'ab'
+                    if key is None or len(parts) > 2 or order not in ('auf', 'ab', 'asc', 'desc'):
+                        output_fn('Ungültige Sortierung. ' + SORT_HELP)
+                        continue
+                    with display_lock:
+                        sort_by = key; descending = order in ('ab', 'desc')
+                        show_rankings()
+                elif command:
+                    output_fn(TERMINAL_HELP)
+                    output_fn(SORT_HELP)
+            except (ReplayError, RemoteError, OSError, ValueError, KeyError, TypeError) as exc:
+                output_fn(safe_error(exc))
+    except (EOFError, KeyboardInterrupt):
+        pass
+    finally:
+        server.shutdown(); server.server_close(); worker.join(timeout=2)
+        app.close()
+    output_fn('Companion beendet.')
+    return 0
+
+
 def main():
-    parser = argparse.ArgumentParser(description='BronzeBrawl Windows Python Companion (stdlib)')
-    parser.add_argument('--no-browser', action='store_true')
-    parser.add_argument('--allow-http-local', action='store_true', help='HTTP-Backend nur localhost/127.0.0.1, expliziter Testmodus')
+    parser = argparse.ArgumentParser(description='BronzeBrawl Companion: Replays holen und Live-Daten im Hintergrund weitergeben.')
+    parser.add_argument('--server', help=argparse.SUPPRESS)
+    parser.add_argument('--league-dir', help='League-Ordner, falls die automatische Erkennung fehlschlägt')
+    parser.add_argument('--web', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('--no-browser', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('--allow-http-local', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
     root = Path(os.getenv('LOCALAPPDATA', str(Path.home() / '.local' / 'share'))) / 'BronzeBrawl' / 'companion'
     app = App(root, allow_http_local=args.allow_http_local)
+    if args.server or args.league_dir:
+        settings = {}
+        if args.server: settings['backendUrl'] = args.server
+        if args.league_dir: settings['leagueDir'] = args.league_dir
+        try:
+            app.configure(settings)
+        except (ValueError, OSError) as exc:
+            app.close()
+            parser.error(safe_error(exc))
+    if not args.web:
+        return run_terminal(app)
     try:
         server = create_server(app)
     except OSError:

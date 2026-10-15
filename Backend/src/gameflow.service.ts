@@ -336,7 +336,7 @@ export class GameflowService {
       teams = teams.filter((team) => this.gameId(team.game) === gameId);
       const teamByName = new Map(teams.map((team) => [team.teamName, team]));
       if (!teamByName.has(0) || !teamByName.has(1)) this.fail('game teams are incomplete', HttpStatus.CONFLICT);
-      let champions = (await this.rows(Champion, store, ['team', 'player'])).filter((champion) => this.gameId(champion.team?.game) === gameId);
+      let champions = (await this.rows(Champion, store, ['team', 'team.game', 'player'])).filter((champion) => this.gameId(champion.team?.game) === gameId);
       const byIdentity = new Map(champions.map((champion) => [String(champion.riotId || champion.summonerName).toLowerCase(), champion]));
       for (const player of roster) {
         const key = this.identity(player);
@@ -473,7 +473,7 @@ export class GameflowService {
   async getAllChampions(gameValue: any): Promise<any> {
     const gameId = this.id(gameValue, 'gameId');
     await this.getGameOrFail(gameId);
-    const champions = (await this.rows(Champion, this.database, ['team', 'player'])).filter((champion) => this.gameId(champion.team?.game) === gameId);
+    const champions = (await this.rows(Champion, this.database, ['team', 'team.game', 'player'])).filter((champion) => this.gameId(champion.team?.game) === gameId);
     const result: any = {
       blue: champions.filter((champion) => champion.team?.teamName === 0).map((champion) => this.publicChampion(champion)),
       red: champions.filter((champion) => champion.team?.teamName === 1).map((champion) => this.publicChampion(champion)),
@@ -494,7 +494,7 @@ export class GameflowService {
       const player = await this.authorizePlayer(input?.player, token, store);
       if (!player.team) this.fail('join a team before choosing a champion', HttpStatus.CONFLICT);
       const championId = this.id(input?.champion, 'championId');
-      const champion = await this.findOne(Champion, (row) => row.championId === championId, store, ['team', 'player']);
+      const champion = await this.findOne(Champion, (row) => row.championId === championId, store, ['team', 'team.game', 'player']);
       if (!champion) this.fail('champion not found', HttpStatus.NOT_FOUND);
       if (this.gameId(champion.team?.game) !== this.gameId(player.game)) this.fail('champion belongs to another game', HttpStatus.FORBIDDEN);
       if (this.teamId(champion.team) !== this.teamId(player.team)) this.fail('champion is on the other team', HttpStatus.FORBIDDEN);

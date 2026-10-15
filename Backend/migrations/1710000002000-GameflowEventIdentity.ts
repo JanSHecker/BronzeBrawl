@@ -14,6 +14,22 @@ export class GameflowEventIdentity1710000002000 implements MigrationInterface {
     if (!table) throw new Error('Gameflow event identity migration requires the event table');
     if (!(table.uniques || []).some((unique) => unique.columnNames.length === 2
       && unique.columnNames[0] === 'gameGameId' && unique.columnNames[1] === 'ingameId')) {
+      const duplicates = await queryRunner.query(`
+        SELECT "gameGameId" AS "gameId", "ingameId", ARRAY_AGG("eventId" ORDER BY "eventId") AS "eventIds"
+        FROM "event"
+        WHERE "gameGameId" IS NOT NULL
+        GROUP BY "gameGameId", "ingameId"
+        HAVING COUNT(*) > 1
+        ORDER BY "gameGameId", "ingameId"
+      `);
+      if (duplicates.length) {
+        const identities = duplicates.map((duplicate: { gameId: number | string; ingameId: number | string; eventIds: Array<number | string> }) =>
+          `gameId=${duplicate.gameId}, ingameId=${duplicate.ingameId}, eventIds=[${duplicate.eventIds.join(', ')}]`).join('; ');
+        throw new Error(
+          `Gameflow event identity migration blocked: duplicate event identities exist (${identities}). `
+          + 'Resolve or merge the listed event rows, then rerun the migration; no rows were deleted automatically.',
+        );
+      }
       await queryRunner.createUniqueConstraint('event', this.unique);
     }
   }

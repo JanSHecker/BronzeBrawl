@@ -2,7 +2,7 @@ import { Button } from "react-daisyui";
 import api from "../api";
 import { useAction } from "../useRequest";
 
-const PunishmentDisplay = ({ punishmentStack, onSuccess }) => {
+const PunishmentDisplay = ({ punishmentStack = [], onSuccess }) => {
   const { run, loading, error } = useAction();
   const punishment = punishmentStack[0];
   const message = !punishment ? "You haven't received any punishments."
@@ -12,7 +12,7 @@ const PunishmentDisplay = ({ punishmentStack, onSuccess }) => {
     <p>{message}</p>
     {punishment && <Button disabled={loading} onClick={() => run(async () => {
       await api.post("confirmPunishment", { id: punishment.punishmentId });
-      onSuccess?.();
+      await onSuccess?.();
     })}>Done</Button>}
     {error && <p role="alert">{error}</p>}
     <p>{punishmentStack.length} Remaining</p>

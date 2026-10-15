@@ -17,7 +17,9 @@ const CreationPage = () => {
       /> */}
       <CreationForm setGameId={setGameId} currentDomain={currentDomain} />
       <Linkbox gameId={gameId} />
-      <a href={window.location.origin + "/lolApi"} target="_blank" rel="noreferrer">
+      <a href="/replays" className="m-3 underline text-slate-900">Replays und Companion einrichten</a>
+      <p className="max-w-xs px-3 text-sm text-slate-800">Companion-Direktmodus und Browser-Relay nur alternativ nutzen, nie gleichzeitig. Die Replay-Seite startet keinen Feed.</p>
+      <a href={window.location.origin + "/lolApi"}>
         <Button color="secondary" className="m-2 justify-self-center">
           Open LoL Monitor
         </Button>

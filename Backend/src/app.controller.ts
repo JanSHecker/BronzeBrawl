@@ -3,7 +3,6 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { Response } from 'express';
 import { AppService } from './app.service';
-import { LolAPIService } from './lolAPI.service';
 import { PlayerService } from './player.service';
 import { ChampionService } from './champion.service';
 import { GameService } from './game.service';
@@ -18,7 +17,6 @@ import { checkDatabaseReadiness } from './database/readiness';
 export class AppController {
   constructor(
     private readonly appService: AppService,
-    private readonly lolApiService: LolAPIService,
     private readonly playerService: PlayerService,
     private readonly championService: ChampionService,
     private readonly gameService: GameService,
@@ -58,8 +56,8 @@ export class AppController {
   }
 
   @Get('lolInput')
-  getHello(): object {
-    return this.lolApiService.getLolInput();
+  getHello(): never {
+    throw new HttpException('global lolInput feed is disabled; post a game-scoped snapshot', HttpStatus.NOT_FOUND);
   }
 
   @Post('sendLoLInput')

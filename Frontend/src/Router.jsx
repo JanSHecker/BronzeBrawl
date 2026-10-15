@@ -5,8 +5,13 @@ import StatusPage from "./StatusPage/StatusPage";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import CreationPage from "./CreationPage/CreationPage";
 import LoLApiFeed from "./LoLApi/LolApi";
+import ReplaysPage from "./ReplaysPage/ReplaysPage";
 
 const router = createBrowserRouter([
+  {
+    path: "/replays",
+    element: <ReplaysPage />,
+  },
   {
     path: "/",
     element: <CreationPage />,
@@ -35,7 +40,7 @@ const router = createBrowserRouter([
 
 const Router = () => {
   return (
-    <div className="min-h-screen max-h-screen flex flex-col items-center justify-evenly m-4 ">
+    <div className="min-h-screen flex flex-col items-center justify-evenly m-4">
       <RouterProvider router={router} />
     </div>
   );

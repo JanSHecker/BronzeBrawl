@@ -1,5 +1,8 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
-import { afterEach } from "vitest";
+import { afterEach, vi } from "vitest";
 
-afterEach(() => { cleanup(); localStorage.clear(); sessionStorage.clear(); });
+afterEach(() => {
+  cleanup(); localStorage.clear(); sessionStorage.clear();
+  vi.restoreAllMocks(); vi.useRealTimers(); vi.unstubAllGlobals();
+});

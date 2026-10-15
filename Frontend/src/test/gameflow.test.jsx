@@ -106,5 +106,6 @@ test("creation ignores duplicate submissions and version-service outages", async
   expect(http.get).toHaveBeenCalledTimes(1);
   resolve({ data: { gameId: 8, hostToken: "b".repeat(64) } });
   await waitFor(() => expect(setGameId).toHaveBeenCalledWith(8));
-  expect(localStorage.getItem("hostToken:8")).toBe("b".repeat(64));
+  expect(sessionStorage.getItem("bb:host:8")).toBe("b".repeat(64));
+  expect(localStorage.getItem("hostToken:8")).toBeNull();
 });

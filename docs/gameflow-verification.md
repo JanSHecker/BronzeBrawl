@@ -45,8 +45,10 @@ dedicated test database; dispose of that database afterward, not production data
 - A final snapshot can be replayed after GameEnd; new events, joins or champion
   changes are rejected after the game ends. Outstanding rewards/punishments can
   still be settled.
-- Player capabilities persist in the browser; host capabilities are keyed by
-  game ID and never included in invite URLs. Pre-security sessions without a
+- New player/host capabilities are kept in per-tab sessionStorage; host capabilities
+  are keyed by game ID and never included in invite URLs. Legacy localStorage
+  capabilities remain readable, but never override an active per-tab session.
+  Pre-security sessions without a
   capability must create a new session; authorization never falls back to a name.
 - Existing migration conflict detection remains fail-closed. Conflicting legacy
   event identities require operator review, never automatic record deletion.
@@ -57,3 +59,16 @@ dedicated test database; dispose of that database afterward, not production data
   superseded revisions are skipped and local operator changes are never reset.
 - The public JSON health probe runs from the reviewed backend image with Linux
   host networking. The server needs Docker and curl, not a host Node.js install.
+
+## Replay/companion merge verification
+
+- The replay pool, protected `/replays` UI and downloadable companion are included.
+  `REPLAY_ADMIN_TOKEN` and optional `RIOT_API_KEY` remain operator configuration;
+  missing credentials fail closed, and opening the replay UI does not start a feed.
+- Both regression suites remain enabled. Browser coverage checks the real replay
+  route, companion ZIP, unauthenticated API rejection, and secured gameflow.
+- `python -m unittest discover -s Companion/tests -v` exercises the companion;
+  CI uses `python3` on Linux.
+- Graceful Nest shutdown cancels Riot requests/rate-limit waits and releases the
+  replay writer lock. File sync uses a writable handle; directory fsync remains
+  enabled on POSIX and is omitted on Windows, where Node does not support it.

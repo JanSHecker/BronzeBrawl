@@ -1,7 +1,8 @@
 import axios from "axios";
-import { useEffect, useState } from "react";
-import { API_BASE_URL, BACKEND_PORT } from "../constants";
+import { useState } from "react";
 import { Button } from "react-daisyui";
+import api, { validId } from "../api";
+import { usePolling } from "../useRequest";
 
 // JSON Display Component
 const JsonDisplay = ({ data, title = "JSON Data" }) => {
@@ -73,7 +74,7 @@ const ErrorInstructions = ({ onRefresh }) => (
           run-lol-proxy-docker.bat
         </code>
       </li>
-      <li>Wait for "Server running on http://localhost:3001"</li>
+      <li>Wait for "Server running on http://localhost:3002"</li>
       <li>Make sure League of Legends is running and you're in a game</li>
     </ol>
     <Button
@@ -115,30 +116,30 @@ const LegacyInfo = () => (
 const LoLApiFeed = () => {
   const PROXY_BASE_URL = "http://localhost:3002";
   const LOL_DATA_ENDPOINT = "/lol-data";
-  const backendBaseUrl = localStorage.getItem("baseURL") || API_BASE_URL;
 
   // State to track proxy connection status
   const [proxyStatus, setProxyStatus] = useState("checking"); // checking, connected, error
   const [lastError, setLastError] = useState(null);
   const [jsonData, setJsonData] = useState(null);
 
-  useEffect(() => {
+  const { error: uploadError, retry } = usePolling(async signal => {
     const getLolInput = async () => {
       const proxyUrl = PROXY_BASE_URL + LOL_DATA_ENDPOINT;
       const axiosInstance = axios.create({ timeout: 5000 });
 
       try {
-        const response = await axiosInstance.get(proxyUrl);
+        const response = await axiosInstance.get(proxyUrl, { signal });
         const responseData = response.data;
 
-        if (proxyStatus !== "connected") {
+        if (!signal.aborted) {
           setProxyStatus("connected");
           setLastError(null);
         }
-        setJsonData(responseData);
+        if (!signal.aborted) setJsonData(responseData);
 
         return responseData;
       } catch (error) {
+        if (signal.aborted) throw error;
         if (
           error.code === "ECONNREFUSED" ||
           error.message.includes("Network Error")
@@ -156,41 +157,17 @@ const LoLApiFeed = () => {
       }
     };
 
-    const sendLoLInput = async () => {
-      try {
-        const lolInput = await getLolInput();
-        const response = await axios.post(
-          backendBaseUrl + BACKEND_PORT + "sendLoLInput",
-          lolInput
-        );
-
-      } catch (error) {
-        console.error("Error sending LoL data:", error);
-      }
-    };
-
-    const checkProxyStatus = async () => {
-      try {
-        await axios.get(PROXY_BASE_URL + "/health", { timeout: 3000 });
-        setProxyStatus("connected");
-      } catch (error) {
-        setProxyStatus("error");
-        setLastError("Local proxy server not responding");
-      }
-    };
-
-    checkProxyStatus();
-
-    const intervalId = setInterval(() => {
-      sendLoLInput();
-    }, 3000);
-
-    return () => clearInterval(intervalId);
-  }, [proxyStatus]);
+    const gameId = Number(localStorage.getItem("hostGameId"));
+    const hostToken = localStorage.getItem(`hostToken:${gameId}`);
+    if (!validId(gameId) || !hostToken) throw new Error("Create a game in this browser before starting the host feed");
+    const input = await getLolInput();
+    await api.post("sendLoLInput", { gameId, input }, { headers: { "X-Game-Token": hostToken }, signal });
+  }, 3000);
 
   return (
     <div className="min-h-screen p-4">
       <h1 className="text-2xl font-bold mb-4">League of Legends API Feed</h1>
+      {uploadError && <p role="alert">{uploadError} <button onClick={retry}>Retry</button></p>}
 
       <div className="flex gap-4 h-[calc(100vh-8rem)]">
         {/* Left Column - Server Info */}

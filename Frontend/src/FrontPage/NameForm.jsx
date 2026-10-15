@@ -1,13 +1,14 @@
-import React, { useState } from "react";
-import { Button, Input, Link } from "react-daisyui";
-import axios from "axios";
+import { useState } from "react";
+import { Button, Input } from "react-daisyui";
+import api, { validId } from "../api";
+import { useAction } from "../useRequest";
 import { useNavigate } from "react-router-dom";
-import { usePlayer } from "../playerContext";
-import { BACKEND_PORT, GAME_ID_KEY, PLAYER_NAME_KEY } from "../constants";
+import { GAME_ID_KEY, PLAYER_NAME_KEY } from "../constants";
 
 const NameForm = () => {
   // State to store the input value
   const [name, setName] = useState("");
+  const { run, loading, error } = useAction();
 
   const navigate = useNavigate();
   // Event handler for input changes
@@ -18,28 +19,19 @@ const NameForm = () => {
   // Event handler for form submission
   const handleSubmit = async (event) => {
     event.preventDefault();
-    const res = await axios.post(
-      localStorage.getItem("baseURL") + BACKEND_PORT + "createPlayer",
-      {
-        playerName: name,
-        game: localStorage.getItem(GAME_ID_KEY),
-      }
-    );
-    const res2 = await axios.get(
-      localStorage.getItem("baseURL") + BACKEND_PORT + "getSettings",
-      {
-        params: {
-          gameId: localStorage.getItem(GAME_ID_KEY),
-        },
-      }
-    );
-    setSettings(res2.data);
-    const player = res.data;
-    console.log({ player });
-    localStorage.setItem("playerId", player.playerId);
-    localStorage.setItem("changeAllowed", true);
-    localStorage.setItem(PLAYER_NAME_KEY, name);
-    navigate("/team");
+    await run(async () => {
+      const gameId = Number(localStorage.getItem(GAME_ID_KEY));
+      if (!validId(gameId) || !name.trim()) throw new Error("Invalid game or name");
+      const { data: settings } = await api.get("getSettings", { params: { gameId } });
+      setSettings(settings);
+      const { data: player } = await api.post("createPlayer", { playerName: name.trim(), game: gameId });
+      if (!validId(player?.playerId) || !/^[a-f0-9]{64}$/i.test(player.playerToken || "")) throw new Error("Invalid player response");
+      localStorage.setItem("playerId", player.playerId);
+      localStorage.setItem("playerToken", player.playerToken);
+      ["teamId", "enemyTeamId", "activeChampionId", "activeChampionName"].forEach(key => localStorage.removeItem(key));
+      localStorage.setItem(PLAYER_NAME_KEY, name.trim());
+      navigate("/team");
+    });
   };
 
   return (
@@ -50,6 +42,7 @@ const NameForm = () => {
             <span className="label-text">What is your name?</span>
           </label>
           <Input
+            id="name"
             type="text"
             value={name}
             onChange={handleNameChange}
@@ -57,9 +50,10 @@ const NameForm = () => {
           />
         </div>
       </div>
-      <Button type="submit" color="primary" wide="true" className="m-8">
+      <Button disabled={loading || !name.trim()} type="submit" color="primary" wide="true" className="m-8">
         START
       </Button>
+      {error && <p role="alert">{error}</p>}
     </form>
   );
 };

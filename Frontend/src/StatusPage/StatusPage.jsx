@@ -1,106 +1,48 @@
-import { useEffect, useRef, useState } from "react";
-import axios from "axios";
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import api from "../api";
+import { usePolling } from "../useRequest";
+import { GAME_VERSION_KEY, DEFAULT_GAME_VERSION } from "../constants";
+import processChampionName from "../nameAdjuster";
+import placeholder from "../Champion_Placeholder.png";
 import PunishmentDisplay from "./PunishmentDisplay";
 import RewardDisplay from "./RewardDisplay";
-import { BACKEND_PORT, GAME_VERSION_KEY, DEFAULT_GAME_VERSION } from "../constants";
 import ChampionRotation from "./ChampionRotation";
-import { useNavigate } from "react-router-dom";
 
 const StatusPage = () => {
-  const [imgError, setImgError] = useState(false);
-  const placeholderUrl = '../Champion_Placeholder.png';
   const navigate = useNavigate();
-  const [kda, setKda] = useState([]);
-  const [changeCounter, setChangeCounter] = useState([]);
-  const [punishmentStack, setPunishmentStack] = useState([]);
-  const [rewardStack, setRewardStack] = useState([]);
-  const [enemyTeam, setEnemyTeam] = useState([]);
-
-  // Get the version safely
+  const [status, setStatus] = useState(null);
+  const { error, retry } = usePolling(async signal => {
+    const { data } = await api.get("Status", { params: { playerId: Number(localStorage.getItem("playerId")) }, signal });
+    if (signal.aborted) return;
+    if (!data || !Array.isArray(data.kda) || data.kda.length !== 3 || !Array.isArray(data.counter)
+      || !Array.isArray(data.punishments) || !Array.isArray(data.rewards) || !Array.isArray(data.enemyTeam)) throw new Error("Invalid status response");
+    if (!data.team) { navigate("/team", { replace: true }); return; }
+    if (!data.champion) { navigate("/champion", { replace: true }); return; }
+    setStatus(data);
+    localStorage.setItem("teamId", data.team.teamId);
+    localStorage.setItem("rotationMode", data.rotationMode);
+    localStorage.setItem("activeChampionId", data.champion.championId);
+    localStorage.setItem("activeChampionName", data.champion.championName);
+  });
   const version = localStorage.getItem(GAME_VERSION_KEY) || DEFAULT_GAME_VERSION;
-  const championName = localStorage.getItem("activeChampionName");
-  const imgURL = `https://static.bigbrain.gg/assets/lol/riot_static/${version}/img/champion/${championName}.png`;
-
-  const unfulfilledPunishments = punishmentStack.filter(
-    (punishment) => !punishment.recieved
-  );
-  const unfullfilledRewards = rewardStack.filter(
-    (reward) => !reward.distributed
-  );
-  // const fulfilledPunishments = punishmentStack.filter(
-  //   (punishment) => !punishment.recieved
-  // );
-
-  const rotationMode = localStorage.getItem("rotationMode");
-
-  const requestRunningRef = useRef(false);
-
-  useEffect(() => {
-    const fetchEvents = async () => {
-      if (requestRunningRef.current === true) {
-        return;
-      }
-      requestRunningRef.current = true;
-      const response = await axios.get(
-        localStorage.getItem("baseURL") + BACKEND_PORT + "Status",
-        {
-          params: {
-            playerId: parseInt(localStorage.getItem("playerId")),
-            championId: localStorage.getItem("activeChampionId"),
-            enemyTeam: localStorage.getItem("enemyTeamId"),
-          },
-        }
-      );
-      const Allstatus = response.data;
-      console.log({ Allstatus });
-      console.log(localStorage.getItem("enemyTeamId"));
-      setPunishmentStack(Allstatus.punishments);
-      setRewardStack(Allstatus.rewards);
-      setKda(Allstatus.kda);
-      setChangeCounter(Allstatus.counter);
-      setEnemyTeam(Allstatus.enemyTeam);
-      requestRunningRef.current = false;
-    };
-    fetchEvents();
-    const intervalId = setInterval(() => {
-      fetchEvents();
-    }, 100);
-
-    // Cleanup function to clear the interval when the component unmounts
-    return () => clearInterval(intervalId);
-  }, []);
-
   return (
-    <>
-      <div className="flex flex-col justify-start gap-2 min-h-screen">
+    <div className="flex flex-col justify-start gap-2 min-h-screen">
+      {error && <p role="alert">{error} <button onClick={retry}>Retry</button></p>}
+      {!status ? <p>Loading game status…</p> : <>
+        <p role="status">{status.gameState === "ended" ? "Game ended" : status.feedStale ? "Waiting for fresh game data…" : "Live"}</p>
         <div className="grid grid-cols-2 gap-2">
           <div className="flex flex-col text-center justify-center bg-slate-300 border border-black rounded p-1">
-            <div className="relative">
-              <img 
-                src={imgError ? placeholderUrl : imgURL} 
-                onError={() => setImgError(true)}
-                alt="champion icon" 
-                className="m-1"
-              />
-              {imgError && (
-                <div className="absolute top-0 right-0 bg-red-500 text-white text-xs px-1 rounded">!</div>
-              )}
-            </div>
-            <h1 className="m-0.5 border border-black text-sm">{`${kda[0]}/${kda[1]}/${kda[2]}`}</h1>
+            <img src={`https://static.bigbrain.gg/assets/lol/riot_static/${version}/img/champion/${processChampionName(status.champion.championName)}.png`}
+              onError={event => { event.currentTarget.onerror = null; event.currentTarget.src = placeholder; }} alt={status.champion.championName} />
+            <h1>{status.kda.join("/")}</h1>
           </div>
-          <ChampionRotation
-            changeCounter={changeCounter}
-            rotationMode={rotationMode}
-            navigate={navigate}
-          />
+          <ChampionRotation changeCounter={status.counter} rotationMode={status.rotationMode} navigate={navigate} ended={status.gameState === "ended"} />
         </div>
-        <PunishmentDisplay punishmentStack={unfulfilledPunishments} />
-        <RewardDisplay
-          rewardStack={unfullfilledRewards}
-          enemyTeam={enemyTeam}
-        />
-      </div>
-    </>
+        <PunishmentDisplay punishmentStack={status.punishments.filter(item => !item.recieved)} onSuccess={retry} />
+        <RewardDisplay rewardStack={status.rewards.filter(item => !item.distributed)} enemyTeam={status.enemyTeam} onSuccess={retry} />
+      </>}
+    </div>
   );
 };
 export default StatusPage;

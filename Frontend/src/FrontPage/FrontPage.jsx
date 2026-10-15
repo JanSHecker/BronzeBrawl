@@ -2,6 +2,7 @@ import { useParams } from "react-router-dom";
 import NameForm from "./NameForm";
 import { GAME_ID_KEY } from "../constants";
 import { API_BASE_URL } from "../constants";
+import icon from "../bronzeIcon150.png";
 
 const FrontPage = () => {
   const params = useParams();
@@ -12,7 +13,7 @@ const FrontPage = () => {
   return (
     <>
       <img
-        src="../bronzeIcon150.png"
+        src={icon}
         alt="bronze brawl with icon"
         className="mb-8 max-w-full h-auto"
       />

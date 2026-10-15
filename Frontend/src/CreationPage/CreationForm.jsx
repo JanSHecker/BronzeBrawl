@@ -1,20 +1,23 @@
 import axios from "axios";
-import { useEffect, useState } from "react";
-import { Button, Dropdown, Input } from "react-daisyui";
-import { BACKEND_PORT, GAME_ID_KEY, GAME_VERSION_KEY } from "../constants";
+import { useState } from "react";
+import { Button, Input } from "react-daisyui";
+import { GAME_ID_KEY, GAME_VERSION_KEY, DEFAULT_GAME_VERSION } from "../constants";
+import api, { validateGame } from "../api";
+import { useAction } from "../useRequest";
 
-const CreationForm = ({ setGameId, currentDomain }) => {
+const CreationForm = ({ setGameId }) => {
   const [punishmentAmount, setPunishmentAmount] = useState("");
   const [rewardAmount, setRewardAmount] = useState("");
   const [rotationMode, setRotationMode] = useState("Kills");
   const [defaultCounter, setDefaultCounter] = useState("");
+  const { run, loading, error } = useAction();
 
   const handleSubmit = async () => {
-    try {
-      const versionResponse = await axios.get("https://ddragon.leagueoflegends.com/api/versions.json");
-      const currentVersion = versionResponse.data[0];
-
-      const res = await axios.get(currentDomain + BACKEND_PORT + "runGame", {
+    await run(async () => {
+      if (![punishmentAmount, rewardAmount, defaultCounter].every(value => /^[1-9]\d*$/.test(value) && Number(value) <= 100)) {
+        throw new Error("Settings must be integers between 1 and 100");
+      }
+      const res = await api.get("runGame", {
         params: {
           punishmentAmount: punishmentAmount,
           rewardAmount: rewardAmount,
@@ -22,14 +25,17 @@ const CreationForm = ({ setGameId, currentDomain }) => {
           defaultCounter: defaultCounter,
         },
       });
-      const game = res.data;
-      console.log(game);
+      const game = validateGame(res.data);
+      localStorage.setItem(`hostToken:${game.gameId}`, game.hostToken);
+      localStorage.setItem("hostGameId", game.gameId);
       setGameId(game.gameId);
       localStorage.setItem(GAME_ID_KEY, game.gameId);
-      localStorage.setItem(GAME_VERSION_KEY, currentVersion);
-    } catch (error) {
-      console.error("Error fetching game version:", error);
-    }
+      // A cosmetic third-party outage must not prevent a lobby from being created.
+      localStorage.setItem(GAME_VERSION_KEY, DEFAULT_GAME_VERSION);
+      axios.get("https://ddragon.leagueoflegends.com/api/versions.json", { timeout: 3000 })
+        .then(({ data }) => { if (Array.isArray(data) && typeof data[0] === "string") localStorage.setItem(GAME_VERSION_KEY, data[0]); })
+        .catch(() => {});
+    });
   };
 
   const handlePunish = (event) => {
@@ -61,10 +67,11 @@ const CreationForm = ({ setGameId, currentDomain }) => {
     >
       <div className="flex flex-col w-full component-preview p-2 items-center justify-center gap-2 font-sans">
         <div className="form-control w-full max-w-xs">
-          <label className="label" htmlFor="name">
+          <label className="label" htmlFor="punishment-amount">
             <span className="label-text text-black">Amount per Punishment</span>
           </label>
           <Input
+            id="punishment-amount"
             type="text"
             value={punishmentAmount}
             onChange={handlePunish}
@@ -72,10 +79,11 @@ const CreationForm = ({ setGameId, currentDomain }) => {
           />
         </div>
         <div className="form-control w-full max-w-xs">
-          <label className="label" htmlFor="name">
+          <label className="label" htmlFor="reward-amount">
             <span className="label-text text-black">Amount per Reward</span>
           </label>
           <Input
+            id="reward-amount"
             type="text"
             value={rewardAmount}
             onChange={handleReward}
@@ -83,7 +91,7 @@ const CreationForm = ({ setGameId, currentDomain }) => {
           />
         </div>
         <div className="form-control w-full max-w-xs">
-          <label className="label" htmlFor="name">
+          <label className="label" htmlFor="options">
             <span className="label-text text-black">Choose Rotation Mode</span>
           </label>
           <select
@@ -98,12 +106,13 @@ const CreationForm = ({ setGameId, currentDomain }) => {
           </select>
         </div>
         <div className="form-control w-full max-w-xs">
-          <label className="label" htmlFor="name">
+          <label className="label" htmlFor="rotation-counter">
             <span className="label-text text-black">
               Kills/Deaths until Rotation
             </span>
           </label>
           <Input
+            id="rotation-counter"
             type="text"
             value={defaultCounter}
             onChange={handleCounter}
@@ -113,6 +122,7 @@ const CreationForm = ({ setGameId, currentDomain }) => {
       </div>
 
       <Button
+        disabled={loading}
         type="submit"
         wide="true"
         color="primary"
@@ -120,6 +130,7 @@ const CreationForm = ({ setGameId, currentDomain }) => {
       >
         CREATE
       </Button>
+      {error && <p role="alert">{error}</p>}
     </form>
   );
 };

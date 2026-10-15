@@ -272,18 +272,26 @@ export class GameflowService {
     if (!input || !Array.isArray(input.allPlayers) || !input.events || !Array.isArray(input.events.Events)) {
       this.fail('invalid game input');
     }
-    if (input.allPlayers.length === 0) this.fail('invalid game input');
+    if (input.allPlayers.length === 0 || input.allPlayers.length > 10) this.fail('invalid game input');
+    const identities = new Set<string>();
+    const counts = { ORDER: 0, CHAOS: 0 };
     return input.allPlayers.map((player: any) => {
       if (!player || typeof player.championName !== 'string' || !player.championName.trim()
         || typeof player.riotIdGameName !== 'string' || !player.riotIdGameName.trim()
-        || (player.team !== 'ORDER' && player.team !== 'CHAOS')) this.fail('invalid player snapshot');
+         || (player.team !== 'ORDER' && player.team !== 'CHAOS')) this.fail('invalid player snapshot');
+      for (const field of ['riotIdTagLine', 'riotId', 'summonerName']) {
+        if (player[field] !== undefined && (typeof player[field] !== 'string' || !player[field].trim())) this.fail('invalid player identity');
+      }
+      const identity = this.identity(player);
+      if (identities.has(identity) || ++counts[player.team] > 5) this.fail('duplicate or oversized roster');
+      identities.add(identity);
       return player;
     });
   }
 
   private identity(player: any): string {
     if (typeof player.riotId === 'string' && player.riotId.trim()) return player.riotId.trim().toLowerCase();
-    return `${player.riotIdGameName}#${player.riotIdTagLine || ''}`.toLowerCase();
+    return `${player.riotIdGameName.trim()}${player.riotIdTagLine ? `#${player.riotIdTagLine.trim()}` : ''}`.toLowerCase();
   }
 
   private eventIdentity(name: any): string {
@@ -301,18 +309,30 @@ export class GameflowService {
   }
 
   private sameEvent(a: any, b: any): boolean {
-    return a.eventType === b.EventName && a.payload && JSON.stringify(a.payload) === JSON.stringify(b);
+    return a.eventType === b.EventName && a.payload && this.canonical(a.payload) === this.canonical(b);
+  }
+
+  // PostgreSQL jsonb does not preserve property order. Replay identity must not
+  // depend on serialization order (including nested payload objects).
+  private canonical(value: any): string {
+    if (Array.isArray(value)) return `[${value.map(item => this.canonical(item)).join(',')}]`;
+    if (value && typeof value === 'object') return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${this.canonical(value[key])}`).join(',')}}`;
+    return JSON.stringify(value);
   }
 
   private async findChampionForName(name: string, champions: any[]): Promise<any | null> {
     const normalized = this.eventIdentity(name);
-    return champions.find((champion) => {
-      const candidates = [champion.summonerName, champion.riotId, champion.riotIdGameName];
+    const matches = champions.filter((champion) => {
+      const candidates = [champion.summonerName, champion.riotId, champion.riotIdGameName,
+        champion.riotIdGameName && champion.riotIdTagLine ? `${champion.riotIdGameName}#${champion.riotIdTagLine}` : null];
       return candidates.filter(Boolean).some((candidate) => this.eventIdentity(candidate) === normalized);
-    }) || null;
+    });
+    if (matches.length > 1) this.fail('ambiguous event participant');
+    return matches[0] || null;
   }
 
   private async playerForChampion(champion: any, players: any[]): Promise<any | null> {
+    if (!champion) return null;
     return players.find((player) => this.championId(player.champion) === champion?.championId) || null;
   }
 
@@ -322,12 +342,16 @@ export class GameflowService {
     return this.transaction(async (store) => {
       const game = await this.getGameOrFail(gameId, store);
       await this.authorizeHost(game, hostToken);
-      if (game.state === 'ended') this.fail('game has ended', HttpStatus.CONFLICT);
       const input = request.input;
       const fingerprint = this.rosterFingerprint(roster);
       if (game.rosterFingerprint && game.rosterFingerprint !== fingerprint) this.fail('roster changed', HttpStatus.CONFLICT);
       const gameTime = input.gameData?.gameTime === undefined ? undefined : this.gameTime(input.gameData.gameTime);
       if (input.gameData?.mapNumber !== undefined) this.gameTime(input.gameData.mapNumber);
+      for (const field of ['mapNumber', 'gameMode']) {
+        const previous = game.feedSnapshot?.gameData?.[field];
+        const current = input.gameData?.[field];
+        if (previous !== undefined && current !== undefined && previous !== current) this.fail('feed source changed', HttpStatus.CONFLICT);
+      }
       if (game.lastGameTime !== null && gameTime !== undefined && gameTime < game.lastGameTime) {
         this.fail('game clock moved backwards', HttpStatus.CONFLICT);
       }
@@ -337,13 +361,13 @@ export class GameflowService {
       const teamByName = new Map(teams.map((team) => [team.teamName, team]));
       if (!teamByName.has(0) || !teamByName.has(1)) this.fail('game teams are incomplete', HttpStatus.CONFLICT);
       let champions = (await this.rows(Champion, store, ['team', 'team.game', 'player'])).filter((champion) => this.gameId(champion.team?.game) === gameId);
-      const byIdentity = new Map(champions.map((champion) => [String(champion.riotId || champion.summonerName).toLowerCase(), champion]));
+      const byIdentity = new Map(champions.map((champion) => [this.identity(champion), champion]));
       for (const player of roster) {
         const key = this.identity(player);
         if (!byIdentity.has(key)) {
           const champion = await this.save(Champion, {
             championName: player.championName,
-            summonerName: `${player.riotIdGameName}${player.riotIdTagLine ? `#${player.riotIdTagLine}` : ''}`,
+            summonerName: player.summonerName || `${player.riotIdGameName}${player.riotIdTagLine ? `#${player.riotIdTagLine}` : ''}`,
             riotId: player.riotId || null,
             riotIdGameName: player.riotIdGameName,
             riotIdTagLine: player.riotIdTagLine || null,
@@ -355,18 +379,26 @@ export class GameflowService {
       }
       const players = (await this.rows(Player, store, ['game', 'team', 'champion'])).filter((player) => this.gameId(player.game) === gameId);
       const existingEvents = (await this.rows(Event, store, ['game'])).filter((event) => this.gameId(event.game) === gameId);
-      const events = [...input.events.Events].sort((a, b) => a.EventID - b.EventID);
-      for (const raw of events) {
-        if (!raw || typeof raw.EventID !== 'number' || !Number.isSafeInteger(raw.EventID) || raw.EventID <= 0
+      for (const raw of input.events.Events) {
+        if (!raw || typeof raw.EventID !== 'number' || !Number.isSafeInteger(raw.EventID) || raw.EventID < 0
           || typeof raw.EventName !== 'string' || !raw.EventName.trim()) this.fail('invalid event');
         if (raw.EventTime !== undefined && (typeof raw.EventTime !== 'number' || !Number.isFinite(raw.EventTime) || raw.EventTime < 0)) {
           this.fail('invalid event time');
         }
+        if (raw.EventName === 'ChampionKill' && (typeof raw.KillerName !== 'string' || !raw.KillerName.trim()
+          || typeof raw.VictimName !== 'string' || !raw.VictimName.trim()
+          || (raw.Assisters !== undefined && (!Array.isArray(raw.Assisters) || raw.Assisters.some((name: any) => typeof name !== 'string' || !name.trim()))))) {
+          this.fail('invalid combat event');
+        }
+      }
+      const events = [...input.events.Events].sort((a, b) => a.EventID - b.EventID);
+      for (const raw of events) {
         const prior = existingEvents.find((event) => event.ingameId === raw.EventID);
         if (prior) {
           if (!this.sameEvent(prior, raw)) this.fail('event identity was reused', HttpStatus.CONFLICT);
           continue;
         }
+        if (game.state === 'ended') this.fail('game has ended', HttpStatus.CONFLICT);
         const event = await this.save(Event, {
           ingameId: raw.EventID, eventType: raw.EventName, payload: raw, game,
         }, store);
@@ -378,9 +410,7 @@ export class GameflowService {
         if (raw.EventName !== 'ChampionKill') continue;
         const victim = await this.findChampionForName(raw.VictimName, champions);
         if (!victim) this.fail('unknown event victim');
-        const killer = this.environmentKiller(raw.KillerName || '')
-          ? null
-          : await this.findChampionForName(raw.KillerName, champions);
+        const killer = await this.findChampionForName(raw.KillerName, champions);
         if (!killer) {
           if (!this.environmentKiller(raw.KillerName || '')) this.fail('unknown event killer');
         }
@@ -388,23 +418,30 @@ export class GameflowService {
         for (const assister of raw.Assisters || []) {
           const champion = await this.findChampionForName(assister, champions);
           if (!champion) this.fail('unknown event assister');
-          assistors.push(champion);
+          if (champion.championId !== killer?.championId && champion.championId !== victim.championId
+            && !assistors.some(prior => prior.championId === champion.championId)) assistors.push(champion);
         }
         const takedown = await this.save(Takedown, {
           multiKill: 1, shutdown: false, event, killer, killed: victim, assistor: assistors,
         }, store);
+        // Event owns this one-to-one FK; persist the owning side explicitly.
+        event.takedown = takedown;
+        await this.save(Event, event, store);
         const victimPlayer = await this.playerForChampion(victim, players);
         const killerPlayer = await this.playerForChampion(killer, players);
         if (victimPlayer) {
           victimPlayer.deathCounter = Math.max(0, Number(victimPlayer.deathCounter || 0) - 1);
           await this.save(Player, victimPlayer, store);
-          await this.save(Punishment, { amount: game.punishmentAmount, punishmentType: 1, player: victimPlayer, takedown }, store);
+          const punishment = await this.save(Punishment, { amount: game.punishmentAmount, punishmentType: 1, player: victimPlayer, takedown }, store);
+          takedown.punishment = punishment;
         }
         if (killerPlayer) {
           killerPlayer.killCounter = Math.max(0, Number(killerPlayer.killCounter || 0) - 1);
           await this.save(Player, killerPlayer, store);
-          await this.save(Reward, { amount: game.rewardAmount, rewardType: 1, distributed: false, player: killerPlayer, takedown }, store);
+          const reward = await this.save(Reward, { amount: game.rewardAmount, rewardType: 1, distributed: false, player: killerPlayer, takedown }, store);
+          takedown.reward = reward;
         }
+        await this.save(Takedown, takedown, store);
       }
       game.rosterFingerprint = fingerprint;
       if (gameTime !== undefined) game.lastGameTime = gameTime;
@@ -457,6 +494,7 @@ export class GameflowService {
     if (!gameId) this.fail('invalid gameId');
     return this.transaction(async (store) => {
       const player = await this.authorizePlayer(input?.player, token, store);
+      if (player.game.state === 'ended') this.fail('game has ended', HttpStatus.CONFLICT);
       const teamId = this.id(input?.team, 'teamId');
       const team = await this.findOne(Team, (row) => row.teamId === teamId, store, ['game']);
       if (!team) this.fail('team not found', HttpStatus.NOT_FOUND);
@@ -492,6 +530,7 @@ export class GameflowService {
     if (!gameId) this.fail('invalid gameId');
     return this.transaction(async (store) => {
       const player = await this.authorizePlayer(input?.player, token, store);
+      if (player.game.state === 'ended') this.fail('game has ended', HttpStatus.CONFLICT);
       if (!player.team) this.fail('join a team before choosing a champion', HttpStatus.CONFLICT);
       const championId = this.id(input?.champion, 'championId');
       const champion = await this.findOne(Champion, (row) => row.championId === championId, store, ['team', 'team.game', 'player']);
@@ -622,7 +661,7 @@ export class GameflowService {
       const takedowns = await this.rows(Takedown, store, ['killer', 'killed']);
       if (punishments.some((row) => this.playerId(row.player) === player.playerId || this.playerId(row.distributor) === player.playerId)
         || rewards.some((row) => this.playerId(row.player) === player.playerId)
-        || takedowns.some((row) => this.championId(row.killer) === this.championId(player.champion) || this.championId(row.killed) === this.championId(player.champion))) {
+         || (player.champion && takedowns.some((row) => this.championId(row.killer) === this.championId(player.champion) || this.championId(row.killed) === this.championId(player.champion)))) {
         this.fail('player has combat history', HttpStatus.CONFLICT);
       }
       if (player.champion) {

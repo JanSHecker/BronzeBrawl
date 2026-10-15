@@ -182,9 +182,30 @@ describe('gameflow contract',()=>{
     await service.deletePlayer({id:a.playerId},a.playerToken);
     await expect(service.status(a.playerId,a.playerToken)).rejects.toMatchObject({status:404});
   });
-  test('GameEnd persists ended state and disallows new gameplay mutations',async()=>{
-    await setup(); await service.ingest({gameId:game.gameId,input:feed([{EventID:1,EventName:'GameEnd',EventTime:10,Result:'Win'}])},game.hostToken);
+  test('rejects malformed snapshots before creating roster state',async()=>{
+    const g=await service.runGame(settings);
+    const malformed=feed(); malformed.allPlayers.push({...malformed.allPlayers[0],championName:'Zed'});
+    await expect(service.ingest({gameId:g.gameId,input:malformed},g.hostToken)).rejects.toMatchObject({status:400});
+    const badEvent=feed([{EventID:1,EventName:'ChampionKill',KillerName:'Alice',VictimName:'Bob',Assisters:[null]}]);
+    await expect(service.ingest({gameId:g.gameId,input:badEvent},g.hostToken)).rejects.toMatchObject({status:400});
+    expect(db.all(Champion)).toHaveLength(0);
+  });
+  test('persists event consequence links and allows an exact ended-feed replay only',async()=>{
+    await setup();
+    const ended=feed([{EventID:1,EventName:'GameEnd',EventTime:10,Result:'Win'}],10);
+    await service.ingest({gameId:game.gameId,input:ended},game.hostToken);
+    await service.ingest({gameId:game.gameId,input:ended},game.hostToken);
     expect((await service.status(a.playerId,a.playerToken)).gameState).toBe('ended');
+    expect(db.all(Event)[0].takedown).toBeUndefined();
     await expect(service.createPlayer({playerName:'Late',game:game.gameId})).rejects.toMatchObject({status:409});
+    await expect(service.joinTeam({player:a.playerId,team:teams[1].teamId},a.playerToken)).rejects.toMatchObject({status:409});
+    await expect(service.ingest({gameId:game.gameId,input:feed([{EventID:2,EventName:'GameEnd',EventTime:11}],11)},game.hostToken)).rejects.toMatchObject({status:409});
+  });
+  test('stores durable takedown, reward and punishment relations for a champion kill',async()=>{
+    await setup(); await service.ingest({gameId:game.gameId,input:feed([kill()])},game.hostToken);
+    const event=db.all(Event)[0]; const takedown=db.all(Takedown)[0];
+    expect(event.takedown).toBe(takedown);
+    expect(takedown.reward).toBe(db.all(Reward)[0]);
+    expect(takedown.punishment).toBe(db.all(Punishment)[0]);
   });
 });

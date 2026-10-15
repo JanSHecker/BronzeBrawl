@@ -1,7 +1,7 @@
 # BronzeBrawl Companion
 
-Eine kleine **Terminal-App**: Replays holen und den lokalen Livegame-Feed
-bereitstellen. Keine Weboberfläche, kein Spiel verbinden, keine Token-Eingabe.
+Eine kleine **Terminal-App**: Replays holen und LoL-Livedaten regelmäßig direkt
+per HTTPS an BronzeBrawl senden. Keine Weboberfläche oder Browser-Netzwerkfreigabe.
 
 ## Starten
 
@@ -10,15 +10,48 @@ Pakete. Alternativ im Companion-Ordner: `python companion.py`.
 
 ```text
 BronzeBrawl Companion
-Live-Feed bereit: http://127.0.0.1:3002/lol-data
-r = Replays holen | l = Rankings anzeigen | s = Sortierung | q = Beenden
+Direkt-Feed: Companion → HTTPS → BronzeBrawl. Kein lokaler Webserver erforderlich.
+v = App verbinden | t = Verbindungsstatus | r = Replays holen | l = Rankings anzeigen | s = Sortierung | q = Beenden
 Sortieren: s kills | s gold | s carry | s momentum (optional: auf/ab)
 ```
 
+## Einmal mit dem Spiel verbinden
+
+1. In der BronzeBrawl-Web-App ein Spiel erstellen und **Companion verbinden** öffnen.
+2. **Neuen Verbindungscode erstellen** anklicken und den Code kopieren.
+3. Im Companion **`v`** eingeben und den vollständigen Code einfügen. Die Eingabe
+   bleibt verborgen; mit Enter bestätigen.
+
+Danach holt der Companion alle drei Sekunden echte Daten von LoL und sendet sie
+selbst an den Server — auch wenn die Website geschlossen ist. Der Browser liest
+nur den Verbindungsstatus vom Backend, nicht vom lokalen PC. Der Companion startet
+im Terminal-Modus **keinen lokalen HTTP-Server**.
+
+Beide Seiten zeigen getrennt an, ob die Verbindung besteht und ob LoL Daten
+liefert. Ein Lebenszeichen wird auch ohne laufendes LoL-Spiel gesendet. Nach
+15 Sekunden ohne Lebenszeichen zeigt die Website „nicht verbunden“. Bei einem
+Netzwerkausfall versucht der Companion automatisch erneut; **`t`** zeigt den Status
+und die Zahl gesendeter Snapshots. Statusänderungen erscheinen automatisch.
+
+Die Verbindung wird in `%LOCALAPPDATA%\BronzeBrawl\companion\connection.json`
+gespeichert und beim Neustart wieder aufgenommen. Die Datei enthält ausschließlich
+den eingeschränkten Feed-Schlüssel, keinen Host- oder LoL-Token: nicht weitergeben.
+**Companion-Zugriff widerrufen** in der Website oder ein neuer Verbindungscode
+sperrt den alten Schlüssel sofort. Nach Widerruf muss ein neuer Code mit `v`
+hinterlegt werden. Für ein neues BronzeBrawl-Spiel ebenfalls einen neuen Code
+verwenden. Ein Spielwechsel oder Zurückspulen wird nicht als dasselbe Spiel
+weitergesendet; der Verbindungsstatus meldet den Konflikt.
+
+## Lokale Befehle
+
 - **`r`** sucht **fremde Summoner’s-Rift-Replays (Karte 11)** über die öffentliche
   Challenger-Solo/Duo-Rangliste deiner LoL-Region, nicht über deinen Verlauf.
-  Pro Durchlauf werden die letzten 20 Spiele von bis zu fünf fremden Konten
-  geprüft. Andere Karten, alte Patches, doppelte Matches und Matches mit deiner
+  Pro Durchlauf werden **zufällig ausgewählte** fremde Konten geprüft, nicht
+  immer die ersten fünf der Rangliste. Noch nicht geprüfte Spieler kommen zuerst;
+  danach die am längsten nicht geprüften. Je Konto werden die letzten 20 Spiele
+  geprüft, zunächst fünf Konten. Wenn dabei keine neuen Matches gefunden werden,
+  folgen höchstens zwei weitere Fünfer-Batches (maximal 15 Konten pro Suche).
+  Andere Karten, alte Patches, doppelte Matches und Matches mit deiner
   PUUID werden ausgeschlossen. Es gibt keine zusätzliche Drei-Download-Grenze.
   Version und Match-Daten kommen automatisch aus dem geöffneten League Client;
   ein zusätzlicher Riot-Key ist nicht nötig. Die Originaldateien
@@ -26,11 +59,16 @@ Sortieren: s kills | s gold | s carry | s momentum (optional: auf/ab)
   Die Suche ist kein vollständiger globaler Katalog; der Client kann einzelne
   Replays wegen Ablauf oder fehlender Download-Berechtigung ablehnen. Es gibt
   keinen Rückfall auf deine eigenen Spiele.
-- **Live-Feed:** Läuft automatisch ab dem Start. `GET /lol-data` liefert echte
-  LoL-Liveclient-Daten; `GET /health` meldet die Verfügbarkeit des Companions.
-  Die Haupt-App holt den Feed automatisch ab, sobald dort ein Host-Spiel besteht.
-  Es gibt keine Spiel-ID, Paarung und keinen Startknopf im Companion.
-- **`q`** oder **Strg+C** beendet die App und den lokalen Feed.
+  Bereits gefundene Match-IDs werden **auch nach einem Neustart ausgeschlossen**.
+  Bekannte Rankings aus der bisherigen Version werden beim Umstieg übernommen.
+  Wenn der geprüfte Ausschnitt keine neuen Spiele enthält, wird das ausdrücklich
+  gemeldet, statt alte Spiele zurückzugeben; die letzte Rangliste bleibt sichtbar.
+  Die nächste Suche prüft andere bzw. länger nicht geprüfte Spieler. Das garantiert
+  keine neuen Matches: Die Quelle bleibt die Challenger-Rangliste deiner Region.
+- **Live-Feed:** Läuft nach dem einmaligen Verbinden automatisch im Hintergrund,
+  unabhängig von Replay-Suche und Downloads. Keine Ereignisrekonstruktion.
+- **`q`** oder **Strg+C** beendet die App und den Versand. Spätestens nach
+  15 Sekunden erkennt die Website die unterbrochene Verbindung.
 
 ## Replay-Rankings
 
@@ -60,17 +98,18 @@ Matches werden ausgeschlossen. Die Datei-Spalte zeigt, was bereits lokal liegt;
 beim Abgleich werden maximal 500 Dateien im League-Replay-Ordner geprüft.
 
 **Kills und Gold sind getrennte Verhältnisse**, keine gemischte Balance oder
-Gesamtbewertung mehr. Beide zeigen **kleinerer Teamwert / größerer Teamwert**:
+Gesamtbewertung mehr. Beide zeigen ausschließlich den Prozentwert aus
+**kleinerer Teamwert / größerer Teamwert × 100 %**, ohne absolute Teamzahlen:
 
 ```text
-Kills: 20 / 30 = 0,67
-Gold:  43000 / 50000 = 0,86
+Kills: 66,67 %
+Gold:  86,00 %
 ```
 
 Kills verwendet die aufsummierten Spieler-Kills je Team; Gold die Summe
 `goldEarned` je Team **am Spielende**, nicht Gold im Inventar oder den Mittelwert
-der Timeline. `1,00` heißt gleich viel, `0,50` halb so viel. `0 / 0` bleibt
-**nicht verfügbar**. Absteigend sortiert stehen die ähnlichsten Teamwerte oben;
+der Timeline. `100 %` heißt gleich viel, `50 %` halb so viel. `0 / 0` bleibt
+**nicht verfügbar** (Anzeige `–`, nicht `0 %`). Absteigend sortiert stehen die ähnlichsten Teamwerte oben;
 aufsteigend die ungleichsten. Sortiert wird mit dem ungerundeten Quotienten.
 Standard ist `s kills`; es erfolgt keine Normalisierung gegenüber anderen Matches.
 
@@ -81,22 +120,27 @@ Ohne gültige Timeline bleibt Momentum **nicht verfügbar**; die beiden Endstand
 Verhältnisse bleiben davon unabhängig. Keine Nullen als Ersatz für fehlende
 Daten und keine ROFL-Ereignisrekonstruktion. Das lokale Schema v2 in `ranking.py`
 ersetzt den alten v1-Cache durch neu berechnete Metriken. Der separate geschützte
-Server-Pool bleibt unverändert.
+Server-Pool wird von der deployten App nicht mehr eingebunden.
 
 Bewertungen bleiben lokal in `%LOCALAPPDATA%\BronzeBrawl\companion\rankings.json`.
+Der Wiederholungsschutz liegt daneben in `discovery.json`: pro Patch maximal
+50.000 gefundene Match-IDs und 2.000 zuletzt geprüfte Spieler-Hashes, keine
+Spielernamen, PUUIDs oder Zugangsdaten. Bei einem neuen Patch beginnt die Auswahl
+neu; zufällige Reihenfolge und Wiederholungsschutz gelten auch für die Startsuche.
 Vollständige Bewertungen werden wiederverwendet; bei anderem Konto oder Patch
 wird neu geprüft. Spieler-PUUIDs und Zugangsdaten werden nicht in der Rangliste
 gespeichert oder angezeigt. Es gibt keine Ranking-Weboberfläche oder Ranking-
-HTTP-API; der lokale HTTP-Endpunkt bleibt ausschließlich für den Live-Feed.
+HTTP-API. Replays und Rankings bleiben ausschließlich im Companion.
 
-Ohne laufendes LoL-Spiel liefert `/lol-data` HTTP 503. Sobald echte Daten
-verfügbar sind, liefert derselbe Endpunkt wieder HTTP 200, ohne Neuverbinden.
+Ohne laufendes LoL-Spiel wird „warte auf LoL-Livedaten“ gemeldet. Sobald echte
+Daten verfügbar sind, beginnt der Versand automatisch, ohne Neuverbinden.
 Der Companion rekonstruiert und erfindet keine Replay-Ereignisse.
 
-Der Feed ist nur auf `127.0.0.1` erreichbar. Die öffentliche BronzeBrawl-Seite
-darf ihn lesen; fremde Websites nicht. Es gibt keine Management- oder Schreib-
-API im Terminal-Modus. Backend-Spielberechtigungen bleiben Sache der Website,
-nicht des Companions. LoL-Zugangsdaten verlassen den lokalen Client nicht.
+Der Companion liest ausschließlich die feste lokale LoL-API auf `127.0.0.1:2999`.
+Nur diese lokale TLS-Verbindung erlaubt LoLs selbstsigniertes Zertifikat;
+die öffentliche Verbindung prüft HTTPS-Zertifikate und folgt keinen Redirects.
+LoL-Zugangsdaten verlassen den lokalen Client nicht. Der Feed-Schlüssel erlaubt
+weder Spielverwaltung noch Spieleraktionen oder den Zugriff auf andere Spiele.
 
 Normalerweise wird alles automatisch gefunden. Nur falls nötig:
 

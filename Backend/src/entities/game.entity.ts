@@ -27,6 +27,15 @@ export class Game {
   hostTokenHash: string;
 
   @Column({ nullable: true })
+  companionTokenHash: string;
+
+  @Column({ nullable: true })
+  lastCompanionAt: Date;
+
+  @Column({ nullable: true })
+  companionAvailability: string;
+
+  @Column({ nullable: true })
   lastGameTime: number;
 
   @Column({ nullable: true })

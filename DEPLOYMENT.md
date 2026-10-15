@@ -30,7 +30,7 @@ This repository now includes a production-oriented deployment setup for a Hetzne
 - Production always uses `synchronize: false` and `dropSchema: false`
 - `npm run start:prod` runs the versioned migration runner before Nest starts
 - `GET /health` returns JSON `status`/`readiness` and returns HTTP 503 until PostgreSQL and every application table exist
-- Replay files are stored in the separate persistent `replay_data` Docker volume; the replay operator token is supplied only through `REPLAY_ADMIN_TOKEN` and is never committed
+- The companion sends LoL snapshots and heartbeats directly over HTTPS; `/companion` shows connection status and creates game-scoped, revocable feed credentials. Replay UI and replay API are no longer mounted. Existing `replay_data` volumes are retained, not deleted.
 
 ## Server setup
 
@@ -57,8 +57,7 @@ Set real values for:
 - `POSTGRES_PASSWORD`
 - `POSTGRES_DB`
 - optionally `VITE_API_BASE_URL` (default `/api` is correct when using nginx reverse proxy)
-- `REPLAY_ADMIN_TOKEN` (generate a long random operator token; never commit it)
-- `REPLAY_STORAGE_DIR` (default `/var/lib/bronzebrawl/replays` in production; keep it on the persistent Docker volume)
+- Legacy `REPLAY_ADMIN_TOKEN` / `REPLAY_STORAGE_DIR` are not used by the active application; existing replay volumes can be retained for archival purposes.
 
 The deploy script stores database backups outside the checkout, in the SSH
 deploy user's state directory: `${XDG_STATE_HOME:-$HOME/.local/state}/bronzebrawl/backups`.
@@ -126,5 +125,6 @@ Recommended value for `HETZNER_DEPLOY_PATH`:
 ## Notes / caveats
 
 - The repo still contains the older dev-oriented `docker-compose.yml`; keep using that for local dev if you want.
-- The `/lolApi` page still depends on a local LoL proxy on the machine running the game client. That piece is separate from the Hetzner deployment.
+- `/lolApi` and `/replays` redirect to `/companion`. The browser only polls the deployed API; no requests to localhost or browser local-network permissions are needed.
+- Deploy frontend and backend together. Startup applies `CompanionConnection1792100000000`; then download the updated Companion ZIP, create a connection code on `/companion`, and enter it with `v` in the terminal. No server-wide shared secret is required. Existing games and host capabilities remain valid.
 - Never enable TypeORM `synchronize` or `dropSchema` in production; schema changes belong in reviewed, versioned migrations.

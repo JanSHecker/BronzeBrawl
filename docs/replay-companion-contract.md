@@ -1,45 +1,82 @@
-# Replay + Live Companion v1 — integration contract
+# Companion direct-feed contract (v2)
 
-## Scope
+## Responsibilities
 
-One Windows-oriented Python 3.11+ companion (stdlib-only), providing the existing localhost:3002 health/lol-data proxy and independent background feed submission. The companion obtains replay candidates/downloads via the logged-in local League Client API, caches actual .rofl files and uploads completed files to the backend. No client/RSO credentials leave the PC. The server stores replay files durably and scores matches from Riot Match-V5 details/timeline; never accept scores supplied by the companion. Existing game feed capability/idempotency semantics remain unchanged.
+- Python 3.11+ Companion: fetch real LoL Liveclient snapshots, send them directly
+  to the deployed HTTPS API, manage local replay discovery/download/rankings.
+- Backend: authorize each game feed, ingest snapshots transactionally and
+  idempotently, persist heartbeat timestamps, expose host-only connection status.
+- Website: create/revoke a restricted game connection and display backend status.
+  It never reads localhost, relays game data, or handles replays.
+- `/companion` replaces the old `/replays` and `/lolApi` pages (redirects).
+  The legacy ReplayModule is not mounted. Existing stored files are not removed.
 
-The public route `/replays` is a protected operational dashboard (token entered in browser session only), not a public catalogue with result spoilers. Missing/expired Riot key leaves real files saved with explicit unanalysed/failed status, never fabricated scores.
+## Pairing
 
-## Backend API (relative to /api)
+The authenticated host creates a connection code in the website. `BB1.` plus
+base64url-encoded JSON `{backendUrl, gameId, token}` is a transport envelope, not
+encryption. It contains a random 256-bit **feed-only capability**, never the host
+token. The user pastes it at the Companion's `v` prompt (hidden input).
 
-All replay API calls require `X-Replay-Token` matching server env `REPLAY_ADMIN_TOKEN` (constant-time comparison, fail closed if unset). No token in URLs. IDs strictly match allowed Riot platform + positive numeric game ID (e.g. EUW1_123). JSON errors use Nest message.
+Only the SHA-256 token hash is stored server-side. Token checks are constant-time.
+Minting a new code revokes the previous code; revocation is serialized with feed
+ingestion by the same PostgreSQL game advisory lock. The capability cannot read
+host status, mint more capabilities, modify settings, or perform player actions.
+There is no shared/global destination game or unauthenticated global feed.
 
-- `GET /replays` returns `{items: ReplayItem[], riotConfigured: boolean}`. Optional `patch=16.20` and `sort=overall|balance|carry|momentum`. Null scores sort last.
-- `PUT /replays/:matchId/file` raw application/octet-stream, `X-Replay-Version: 16.20.123.456`. Stream bounded file (max 150 MiB), validate replay signature/header, store atomically under REPLAY_STORAGE_DIR. Returns ReplayItem. Idempotent same bytes; reject mismatched duplicate rather than overwrite/reserved identity. New item status pending. Analysis triggered asynchronously outside upload response (and restart-resumed bounded worker).
-- `GET /replays/:matchId/file` binary streamed response with file SHA256 available in item. Do not expose filesystem paths.
-- `POST /replays/:matchId/analyze` queues analysis/retry and returns ReplayItem (pending). Requests coalesce. Riot errors sanitized and persisted. Timeout, rate limit/backoff, no unhandled promise rejection.
-- `DELETE /replays/:matchId` removes unreserved item and file; conflict for reserved.
-- `POST /replays/reserve` JSON `{gameId: positive integer, gameVersion: full version, sortBy?: overall|balance|carry|momentum}` returns `{item: ReplayItem}`. Atomically choose current matching major.minor patch, ready analysis, nonreserved; repeated same game id idempotent, no API/download at selection. Conflict when no suitable replay. Explicit reservations are managed by authenticated host/operator, not automatic unrelated live-game assignment.
-- `POST /replays/:matchId/release` JSON `{gameId}` removes reservation only when matching. Keeps consumed/reused semantics explicit in docs.
+The Companion stores the restricted credential in the current user's local
+`connection.json` so restarts reconnect automatically. Never log or publish this
+file. The code is never put in URLs or browser storage. The HTTPS destination
+comes from the actual website API base, avoiding public-domain redirect aliases.
+Public TLS validation remains mandatory and authenticated requests never redirect.
 
-ReplayItem:
-```
-{
- matchId, gameVersion, patch, sizeBytes, sha256, createdAt,
- analysisStatus: 'pending'|'ready'|'failed', analysisError: string|null,
- scores: null | {
-   version: 1, balance: number, carry: number, momentum: number|null,
-   overall: number, metrics: object
- },
- reservedGameId: number|null
-}
-```
-Scores are clamped 0–100. Higher balance = closer teams (kill and time-weighted gold parity). Higher carry = stronger kill concentration/player dominance (not necessarily closer match). Higher momentum = meaningful gold swings/lead changes/comeback recovery (deadband prevents zero-noise inflation). Missing timeline => momentum null and explicit partial metrics, no invented gold values. Include duration, total/team/player kill spread, carry player/team identity without player PUUIDs, gold swing/lead-change metrics, formula/version. Final totals must not hide a stomp; transparent default overall weighting, duration/kill-density as context. Non-Summoner's-Rift/nonvalid 2x5 rosters rejected for scoring. Server fetches match IDs against fixed allowlisted Riot region hosts, with Riot key only in headers.
+## API (relative to `/api`, responses `Cache-Control: no-store`)
 
-## Companion integration
+Host-only, `X-Game-Token`:
 
-Backend URL default `https://bronze-brawl.janhec.de/api`. Pool auth token is distinct from per-game `X-Game-Token`. The latter sends `{gameId, input}` to `POST /sendLoLInput` every ~3s while feed enabled, without an open browser tab; serialize requests, bounded backoff, halt/report terminal 401/403/409 errors rather than relabel or replay events. Keep legacy `/health` and `/lol-data` on loopback port 3002. Avoid concurrent browser relay/direct feeding; dashboard must indicate mode.
+- `POST /companion/connect` `{gameId}` → `{gameId, token}` (rotates credential).
+- `POST /companion/disconnect` `{gameId}` → `{ok:true}` (revokes credential).
+- `GET /companion/status?gameId=…` → `{gameId, paired, connected, availability,
+  lastSeenAt, lastInputAt, feedFresh, gameState, serverTime}`. Never returns tokens
+  or full LoL data. `connected` expires after 15 seconds without a heartbeat or
+  accepted input. `feedFresh` additionally requires recent accepted input and a
+  `live` availability report; connectivity alone does not imply a running game.
 
-Local app has trusted loopback-only management UI for server settings, game pairing, local LoL connection, discovery/download, saved replay list, cached server files, playback and status. Secrets are never returned by status/config APIs or logged. Management writes require unpredictable per-process token and origin/Host validation. Only approved production/local origins may read legacy proxy. No arbitrary shell commands, path injection or remote TLS disable. Local self-signed LoL certificate exception only on fixed loopback addresses.
+Companion-only, `X-Companion-Token`:
 
-Discovery uses current account history, current patch and bounded candidate/request counts. Background refill polls pool and obtains candidates without blocking feeding. Downloads must wait for actual local completion and validate file before upload. Use readonly local replay metadata/current patch to prevent old files counted as playable. Historical ROFL1 and current ROFL2 support must be explicit; unsupported headers fail honestly. Starting a replay via local client does not prove replay liveclientdata availability: show clear unavailable status when no game data API is provided, never synthesize events.
+- `POST /companion/heartbeat` `{gameId, availability:'waiting'|'live'|'conflict'}`
+  → `{ok:true, gameId, serverTime}`.
+- `POST /companion/input` `{gameId,input:<real Liveclient snapshot>}` → public game
+  response. Uses the existing transactional ingest, roster/clock validation and
+  event idempotency. The legacy host-authenticated `/sendLoLInput` endpoint remains
+  compatible but the website never uses it as a relay.
 
-## Delivery / verification
+## Sender and status
 
-Backend Jest regression suite, frontend Vitest/lint/build, companion unittest with localhost fake transports and real HTTP routes plus no-LoL offline behavior. Verify upload/list/scoring failure/reservation/auth/duplicate/download with isolated real file fixture; avoid production test replays or invented ranked matches. Build downloadable source ZIP with Windows start script and clear Python requirement; optional CI Windows PyInstaller build, not claim a tested Windows .exe without real build output. Public live UI and API smoke tests and regression gameflow, with scoped cleanup and durable Docker volume. Update deployment docs/project overview.
+An independent worker fetches `https://127.0.0.1:2999/liveclientdata/allgamedata`,
+sends a heartbeat, and posts the real snapshot every approximately three seconds.
+No snapshot buffering/replaying on network retry; each retry fetches fresh data.
+Even unchanged clocks are safe and submitted, preserving freshness during pauses.
+Replay search/download/ranking never blocks this worker. The default terminal
+mode does not start a localhost web server.
+
+No LoL data is normal: heartbeat continues with `waiting`. Once LoL supplies data,
+input resumes automatically. Transient failures use bounded backoff (up to 12s).
+401/403 and other non-retryable client errors stop the sender and request a new
+code. A changed source/clock or HTTP 409 reports `conflict` without relabeling
+events or assigning another game's input. Both terminal and website distinguish
+connection, missing LoL data, conflict, and lost connectivity. Closing the browser
+does not affect sending; closing the Companion expires website connectivity in 15s.
+
+The explicit `--web` switch retains the legacy local compatibility UI for
+development only; it is not the production connection flow.
+
+## Verification
+
+Companion unittest: fresh/direct sends, unavailable LoL, restart recovery,
+revocation, bounded retries, changed game, simultaneous replay work, secret safety.
+Backend Jest: restricted credentials, cross-game rejection, token rotation,
+heartbeat expiry, idempotent ingest, persisted connection across service restart.
+Frontend Vitest: backend-only polling, status transitions/recovery, host-session
+switch cancellation, connection-code generation, revocation, old-route redirects.
+Browser e2e uses synthetic API inputs on an isolated local test database only.

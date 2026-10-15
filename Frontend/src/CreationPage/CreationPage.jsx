@@ -20,8 +20,8 @@ const CreationPage = () => {
       /> */}
       <CreationForm setGameId={setGameId} currentDomain={currentDomain} />
       <Linkbox gameId={gameId} />
-      <a href="/replays" className="m-3 underline text-slate-900">Replays und Companion einrichten</a>
-      <p className="max-w-xs px-3 text-sm text-slate-800">Companion im Terminal starten. Live-Daten werden nach dem Erstellen eines Spiels automatisch abgeholt — ohne zusätzliches Verbinden. Das funktioniert auch nach einem Neuladen dieser Seite.</p>
+      <a href="/companion" className="m-3 underline text-slate-900">Companion verbinden</a>
+      <p className="max-w-xs px-3 text-sm text-slate-800">Companion auf dem LoL-PC starten und einmal mit dem Spiel verbinden. Er sendet Live-Daten direkt an den Server — auch wenn diese Seite geschlossen ist.</p>
     </div>
   );
 };

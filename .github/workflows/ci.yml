@@ -43,6 +43,10 @@ jobs:
         working-directory: Frontend
         run: npm ci
 
+      - name: Package current companion sources
+        if: matrix.app == 'frontend'
+        run: python3 scripts/package-companion.py
+
       - name: Build frontend
         if: matrix.app == 'frontend'
         working-directory: Frontend

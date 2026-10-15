@@ -246,6 +246,78 @@ export class GameflowService {
     if (!this.matchesToken(token, game.hostTokenHash)) this.fail('invalid host capability', HttpStatus.FORBIDDEN);
   }
 
+  private authorizeCompanion(game: any, token: string): void {
+    if (!this.matchesToken(token, game.companionTokenHash)) this.fail('invalid companion capability', HttpStatus.FORBIDDEN);
+  }
+
+  private async getCompanionGame(gameId: number, store: Store = this.database): Promise<any> {
+    if (!store?.getRepository) return this.getGameOrFail(gameId, store);
+    // Status polling/heartbeats must not load every game's large feed snapshot.
+    const game = await store.getRepository(Game).findOne({
+      where: { gameId },
+      select: ['gameId', 'hostTokenHash', 'companionTokenHash', 'lastCompanionAt',
+        'companionAvailability', 'lastFeedAt', 'state'],
+    });
+    if (!game) this.fail('game not found', HttpStatus.NOT_FOUND);
+    return game;
+  }
+
+  async connectCompanion(input: { gameId: any }, hostToken: string): Promise<any> {
+    const gameId = this.id(input?.gameId, 'gameId');
+    return this.transaction(async store => {
+      const game = await this.getCompanionGame(gameId, store);
+      await this.authorizeHost(game, hostToken);
+      const token = this.token();
+      game.companionTokenHash = this.hash(token);
+      game.lastCompanionAt = null;
+      game.companionAvailability = null;
+      await this.save(Game, game, store);
+      return { gameId, token };
+    }, gameId);
+  }
+
+  async disconnectCompanion(input: { gameId: any }, hostToken: string): Promise<any> {
+    const gameId = this.id(input?.gameId, 'gameId');
+    return this.transaction(async store => {
+      const game = await this.getCompanionGame(gameId, store);
+      await this.authorizeHost(game, hostToken);
+      game.companionTokenHash = null;
+      game.lastCompanionAt = null;
+      game.companionAvailability = null;
+      await this.save(Game, game, store);
+      return { ok: true };
+    }, gameId);
+  }
+
+  async companionHeartbeat(input: { gameId: any; availability: any }, token: string): Promise<any> {
+    const gameId = this.id(input?.gameId, 'gameId');
+    if (!['waiting', 'live', 'conflict'].includes(input?.availability)) this.fail('invalid companion availability');
+    return this.transaction(async store => {
+      const game = await this.getCompanionGame(gameId, store);
+      this.authorizeCompanion(game, token);
+      game.lastCompanionAt = new Date();
+      game.companionAvailability = input.availability;
+      await this.save(Game, game, store);
+      return { ok: true, gameId, serverTime: game.lastCompanionAt.toISOString() };
+    }, gameId);
+  }
+
+  async companionStatus(gameId: number, hostToken: string): Promise<any> {
+    const game = await this.getCompanionGame(gameId);
+    await this.authorizeHost(game, hostToken);
+    const now = Date.now();
+    const lastSeen = game.lastCompanionAt ? new Date(game.lastCompanionAt).getTime() : 0;
+    const lastInput = game.lastFeedAt ? new Date(game.lastFeedAt).getTime() : 0;
+    const paired = Boolean(game.companionTokenHash);
+    const connected = paired && lastSeen > 0 && now - lastSeen <= 15000;
+    return {
+      gameId, paired, connected, availability: game.companionAvailability || 'waiting',
+      lastSeenAt: game.lastCompanionAt || null, lastInputAt: game.lastFeedAt || null,
+      feedFresh: connected && game.companionAvailability === 'live' && lastInput > 0 && now - lastInput <= 15000,
+      gameState: game.state, serverTime: new Date(now).toISOString(),
+    };
+  }
+
   async runGame(input: GameInput): Promise<any> {
     const punishmentAmount = this.numberSetting(input?.punishmentAmount, 'punishmentAmount');
     const rewardAmount = this.numberSetting(input?.rewardAmount, 'rewardAmount');
@@ -382,12 +454,21 @@ export class GameflowService {
   }
 
   async ingest(request: { gameId: any; input: any }, hostToken: string): Promise<any> {
+    return this.ingestSnapshot(request, hostToken, false);
+  }
+
+  async ingestCompanion(request: { gameId: any; input: any }, token: string): Promise<any> {
+    return this.ingestSnapshot(request, token, true);
+  }
+
+  private async ingestSnapshot(request: { gameId: any; input: any }, token: string, companion: boolean): Promise<any> {
     const gameId = this.id(request?.gameId, 'gameId');
     const roster = this.normalizeRoster(request?.input);
     const events = this.normalizeEvents(request?.input);
     return this.transaction(async (store) => {
       const game = await this.getGameOrFail(gameId, store);
-      await this.authorizeHost(game, hostToken);
+      if (companion) this.authorizeCompanion(game, token);
+      else await this.authorizeHost(game, token);
       const input = request.input;
       const fingerprint = this.rosterFingerprint(roster);
       if (game.rosterFingerprint && game.rosterFingerprint !== fingerprint) this.fail('roster changed', HttpStatus.CONFLICT);
@@ -493,6 +574,10 @@ export class GameflowService {
       if (gameTime !== undefined) game.lastGameTime = gameTime;
       game.feedSnapshot = input;
       game.lastFeedAt = new Date();
+      if (companion) {
+        game.lastCompanionAt = game.lastFeedAt;
+        game.companionAvailability = 'live';
+      }
       if (game.state !== 'ended') game.state = 'live';
       await this.save(Game, game, store);
       return this.publicGame(game);

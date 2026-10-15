@@ -2,16 +2,19 @@ import FrontPage from "./FrontPage/FrontPage";
 import TeamSelectionPage from "./TeamSelectionPage/TeamSelectionPage";
 import ChampionSelectionPage from "./ChampionSelectionPage/ChampionSelectionPage";
 import StatusPage from "./StatusPage/StatusPage";
-import { createBrowserRouter, RouterProvider } from "react-router-dom";
+import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 import CreationPage from "./CreationPage/CreationPage";
-import LoLApiFeed from "./LoLApi/LolApi";
-import ReplaysPage from "./ReplaysPage/ReplaysPage";
+import CompanionPage from "./CompanionPage/CompanionPage";
 import { LiveFeedProvider } from "./LoLApi/LiveFeed";
 
 const router = createBrowserRouter([
   {
     path: "/replays",
-    element: <ReplaysPage />,
+    element: <Navigate to="/companion" replace />,
+  },
+  {
+    path: "/companion",
+    element: <CompanionPage />,
   },
   {
     path: "/",
@@ -19,7 +22,7 @@ const router = createBrowserRouter([
   },
   {
     path: "/lolApi",
-    element: <LoLApiFeed />,
+    element: <Navigate to="/companion" replace />,
   },
   {
     path: "/name/:parameter",

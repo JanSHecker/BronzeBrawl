@@ -1,5 +1,7 @@
 """BronzeBrawl Companion: one local app, independent feed and bounded replay jobs."""
 import argparse
+import base64
+import getpass
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -15,7 +17,7 @@ import time
 import webbrowser
 
 from network import MAX_FILE, Network, RemoteError, validate_backend
-from replay import Cache, LCU, ReplayError, atomic_json, match_id, patch_of, version
+from replay import Cache, DiscoveryHistory, LCU, ReplayError, atomic_json, match_id, patch_of, version
 from ranking import RANKING_VERSION, sort_rankings, valid_ranking
 
 DEFAULT_BACKEND = 'https://bronze-brawl.de/api'
@@ -23,7 +25,7 @@ PUBLIC_ORIGINS = frozenset(('https://bronze-brawl.de', 'https://bronze-brawl.jan
                             'http://localhost:5173', 'http://127.0.0.1:5173'))
 STATIC = Path(__file__).resolve().parent
 RANKING_LABELS = {'kills': 'Kills-Verhältnis', 'gold': 'Gold-Verhältnis', 'carry': 'Carry', 'momentum': 'Momentum'}
-TERMINAL_HELP = 'r = Replays holen | l = Rankings anzeigen | s = Sortierung | q = Beenden'
+TERMINAL_HELP = 'v = App verbinden | t = Verbindungsstatus | r = Replays holen | l = Rankings anzeigen | s = Sortierung | q = Beenden'
 SORT_HELP = 'Sortieren: s kills | s gold | s carry | s momentum (optional: auf/ab)'
 
 
@@ -43,6 +45,45 @@ def safe_error(exc):
     return 'Lokaler Vorgang fehlgeschlagen. Client, Einstellungen und freien Speicher prüfen.'
 
 
+def connection_settings(data, allow_http_local=False):
+    if not isinstance(data, dict):
+        raise ValueError('Ungültiger Verbindungscode.')
+    backend = validate_backend(data.get('backendUrl'), allow_http_local)
+    gid = positive_id(data.get('gameId'))
+    token = data.get('token')
+    if not isinstance(token, str) or len(token) != 64 or any(c not in '0123456789abcdef' for c in token):
+        raise ValueError('Ungültiger Verbindungscode.')
+    return {'backendUrl': backend, 'gameId': gid, 'token': token}
+
+
+def parse_connection(code, allow_http_local=False):
+    try:
+        if not isinstance(code, str) or not code.startswith('BB1.') or len(code) > 8192:
+            raise ValueError()
+        encoded = code[4:]
+        data = json.loads(base64.b64decode(encoded + '=' * (-len(encoded) % 4), altchars=b'-_', validate=True))
+        return connection_settings(data, allow_http_local)
+    except (ValueError, TypeError, UnicodeError):
+        raise ReplayError('Verbindungscode ungültig. In der Haupt-App einen neuen Code erstellen und vollständig einfügen.') from None
+
+
+def connection_status(feed):
+    if not feed['enabled']:
+        return 'Nicht verbunden. ' + (feed.get('error') or 'In der Haupt-App unter Companion einen Code erstellen; hier v eingeben.')
+    connected = feed.get('connected') and time.time() - (feed.get('lastHeartbeat') or 0) <= 15
+    if not connected:
+        return 'Verbindung zur App unterbrochen – erneuter Versuch automatisch.' + (' ' + feed['error'] if feed.get('error') else '')
+    if feed.get('error'):
+        return 'App verbunden – ' + feed['error']
+    if feed.get('availability') == 'conflict':
+        return 'App verbunden – Spiel gewechselt. Ein neues BronzeBrawl-Spiel verbinden.'
+    if feed.get('gameState') == 'ended':
+        return 'App verbunden – Spiel beendet. Für das nächste Spiel einen neuen Code verwenden.'
+    if feed.get('availability') != 'live':
+        return 'App verbunden – warte auf LoL-Livedaten.'
+    return 'App verbunden – Live-Daten werden direkt an den Server gesendet.'
+
+
 class App:
     def __init__(self, root, network=None, allow_http_local=False):
         self.root = Path(root); self.root.mkdir(parents=True, exist_ok=True)
@@ -51,20 +92,22 @@ class App:
         self.token = secrets.token_urlsafe(32)
         self.lock = threading.RLock(); self.feed_lock = threading.Lock(); self.replay_lock = threading.Lock()
         self.stop_event = threading.Event(); self.feed_wake = threading.Event(); self.refill_wake = threading.Event()
-        self.backend = DEFAULT_BACKEND; self.pool_token = ''; self.host_token = ''; self.game_id = None
+        self.backend = DEFAULT_BACKEND; self.pool_token = ''; self.host_token = ''; self.companion_token = ''; self.game_id = None
         self.league_dir = ''; self.target = 5; self.refill_enabled = False; self.workers = []
-        self.lcu = LCU(self.network)
-        self.feed = {'enabled': False, 'error': None, 'sent': 0, 'failures': 0, 'lastSuccess': None, 'availability': 'nicht geprüft'}
+        self.discovery = DiscoveryHistory(self.root / 'discovery.json')
+        self.lcu = LCU(self.network, discovery=self.discovery)
+        self.feed = {'enabled': False, 'connected': False, 'lastHeartbeat': None, 'gameState': None, 'error': None, 'sent': 0, 'failures': 0, 'lastSuccess': None, 'availability': 'nicht geprüft'}
         self.refill = {'enabled': False, 'error': None, 'lastCheck': None, 'compatibleUnreserved': None}
         self.jobs = {}; self.job_queue = queue.Queue(maxsize=8); self.candidates = []
         self.ranking_lock = threading.Lock()
-        self.ranking_state = {'items': [], 'running': False, 'updatedAt': None, 'skipped': 0, 'error': None}
+        self.ranking_state = {'items': [], 'running': False, 'updatedAt': None, 'skipped': 0, 'error': None, 'notice': None}
         self.ranking_account = None
         try:
             saved_rankings = json.loads((self.root / 'rankings.json').read_text(encoding='utf-8'))
             if isinstance(saved_rankings.get('items'), list) and len(saved_rankings['items']) <= 500 and all(valid_ranking(item) for item in saved_rankings['items']):
                 self.ranking_state.update(items=saved_rankings['items'], updatedAt=saved_rankings.get('updatedAt'))
                 self.ranking_account = saved_rankings.get('account')
+                self.discovery.seed_rankings(saved_rankings['items'])
         except (OSError, ValueError, TypeError, AttributeError):
             pass
         self.sessions = {}
@@ -72,7 +115,7 @@ class App:
             saved = json.loads((self.root / 'settings.json').read_text(encoding='utf-8'))
             self.backend = validate_backend(saved.get('backendUrl', DEFAULT_BACKEND), allow_http_local)
             self.league_dir = saved.get('leagueDir', '')
-            self.lcu = LCU(self.network, self.league_dir)
+            self.lcu = LCU(self.network, self.league_dir, discovery=self.discovery)
             self.target = max(1, min(20, int(saved.get('target', 5))))
         except (OSError, ValueError, TypeError):
             pass
@@ -82,6 +125,24 @@ class App:
                 self.sessions = sessions
         except (OSError, ValueError):
             pass
+
+        try:
+            saved = connection_settings(json.loads((self.root / 'connection.json').read_text(encoding='utf-8')), allow_http_local)
+            self.backend = saved['backendUrl']; self.game_id = saved['gameId']; self.companion_token = saved['token']
+            self.feed.update(enabled=True, availability='waiting')
+        except (OSError, ValueError, TypeError):
+            pass
+
+    def connect_code(self, code):
+        settings = parse_connection(code, self.allow_http_local)
+        with self.feed_lock, self.lock:
+            # Only the restricted feed capability is stored, never the host token.
+            atomic_json(self.root / 'connection.json', settings)
+            self.backend = settings['backendUrl']; self.game_id = settings['gameId']; self.companion_token = settings['token']
+            self.host_token = ''
+            self.feed.update(enabled=True, connected=False, lastHeartbeat=None, lastSuccess=None, gameState=None, error=None, failures=0, sent=0, availability='waiting')
+        self.feed_wake.set()
+        return {'ok': True}
 
     def configure(self, data):
         if not isinstance(data, dict):
@@ -106,29 +167,32 @@ class App:
             # Blank fields retain capabilities only for the same destination/game.
             if backend != self.backend:
                 self.host_token = ''; self.pool_token = ''
+                self.companion_token = ''
             if gid != self.game_id:
                 self.host_token = ''
+                self.companion_token = ''
             self.backend = backend; self.game_id = gid; self.target = target; self.league_dir = league
             if data.get('poolToken'):
                 self.pool_token = data['poolToken']
             if data.get('hostToken'):
                 self.host_token = data['hostToken']
-            self.lcu = LCU(self.network, league)
+            self.lcu = LCU(self.network, league, discovery=self.discovery)
             atomic_json(self.root / 'settings.json', {'backendUrl': backend, 'leagueDir': league, 'target': target})
-            self.feed.update(enabled=bool(self.game_id and self.host_token), error=None, failures=0, lastSuccess=None)
+            self.feed.update(enabled=bool(self.game_id and (self.host_token or self.companion_token)), error=None, failures=0, lastSuccess=None)
         self.feed_wake.set()
         return {'ok': True}
 
     def forget(self):
         self.feed_stop()
         with self.lock:
-            self.pool_token = ''; self.host_token = ''; self.game_id = None
+            self.pool_token = ''; self.host_token = ''; self.companion_token = ''; self.game_id = None
+            (self.root / 'connection.json').unlink(missing_ok=True)
             self.refill_enabled = False; self.refill['enabled'] = False
         return {'ok': True}
 
     def status(self):
         with self.lock:
-            return {'poolPaired': bool(self.pool_token), 'gamePaired': bool(self.game_id and self.host_token),
+            return {'poolPaired': bool(self.pool_token), 'gamePaired': bool(self.game_id and (self.host_token or self.companion_token)),
                     'feed': dict(self.feed), 'refill': dict(self.refill), 'jobs': [dict(j) for j in self.jobs.values()],
                     'localItems': self.cache.items(), 'candidates': list(self.candidates),
                     'replayFormat': 'RIOT/ROFL1 unterstützt; ROFL2/RLR derzeit ausdrücklich nicht unterstützt',
@@ -149,7 +213,7 @@ class App:
 
     def feed_start(self):
         with self.lock:
-            if not self.game_id or not self.host_token:
+            if not self.game_id or not (self.host_token or self.companion_token):
                 raise ReplayError('Zuerst Spiel-ID und Host-Token paaren.')
             self.feed.update(enabled=True, error=None, failures=0)
         self.feed_wake.set()
@@ -158,6 +222,7 @@ class App:
     def feed_stop(self):
         with self.lock:
             self.feed['enabled'] = False
+            self.feed['connected'] = False
         self.feed_wake.set()
         return {'ok': True}
 
@@ -169,6 +234,9 @@ class App:
                 if not self.feed['enabled']:
                     return 3
                 gid, token, backend = self.game_id, self.host_token, self.backend
+                companion_token = self.companion_token
+            if companion_token:
+                return self._direct_tick(gid, companion_token, backend)
             try:
                 data = self.live_data()
                 clock = data['gameData'].get('gameTime')
@@ -206,6 +274,71 @@ class App:
                 return self._feed_failure(e)
         finally:
             self.feed_lock.release()
+
+    def _direct_tick(self, gid, token, backend):
+        """Independent HTTPS sender; browser and replay jobs are not involved."""
+        headers = {'X-Companion-Token': token}
+        try:
+            try:
+                data = self.live_data()
+            except ReplayError:
+                data = None
+            availability = 'live' if data is not None else 'waiting'
+            session = None
+            key = hashlib.sha256((backend + ':' + str(gid)).encode()).hexdigest()
+            if data is not None:
+                clock = data['gameData'].get('gameTime')
+                players = data['allPlayers']
+                if isinstance(clock, bool) or not isinstance(clock, (int, float)) or not math.isfinite(clock) or clock < 0 or not 0 < len(players) <= 20 or not all(isinstance(p, dict) for p in players):
+                    data = None; availability = 'waiting'
+                else:
+                    roster = sorted((str(p.get('riotId', p.get('summonerName', ''))), str(p.get('championName', '')), str(p.get('team', ''))) for p in players)
+                    identity = hashlib.sha256(json.dumps([roster, data['gameData'].get('gameMode'), data['gameData'].get('mapNumber')], sort_keys=True).encode()).hexdigest()
+                    session = {'identity': identity, 'clock': clock}
+                    previous = self.sessions.get(key)
+                    if previous and (previous.get('identity') != identity or clock < previous.get('clock', 0)):
+                        data = None; availability = 'conflict'
+                    elif previous and previous.get('ended'):
+                        data = None; availability = 'waiting'
+                        with self.lock:
+                            self.feed['gameState'] = 'ended'
+            # A heartbeat also proves connectivity when LoL is closed or paused.
+            result = self.network.request('POST', backend + '/companion/heartbeat', headers, {'gameId': gid, 'availability': availability})
+            if not isinstance(result, dict) or result.get('ok') is not True or result.get('gameId') != gid:
+                raise RemoteError(502)
+            with self.lock:
+                self.feed.update(connected=True, lastHeartbeat=time.time(), availability=availability, failures=0, error=None)
+            if data is not None:
+                # Repeated clocks are safe: the server handles event idempotency.
+                # Sending paused snapshots keeps connection and feed freshness honest.
+                accepted = self.network.request('POST', backend + '/companion/input', headers, {'gameId': gid, 'input': data})
+                if not isinstance(accepted, dict) or accepted.get('gameId') != gid or accepted.get('state') not in ('live', 'ended'):
+                    raise RemoteError(502)
+                session['ended'] = accepted['state'] == 'ended'
+                self.sessions[key] = session
+                atomic_json(self.root / 'sessions.json', self.sessions)
+                with self.lock:
+                    self.feed.update(sent=self.feed['sent'] + 1, lastSuccess=time.time(), gameState=accepted['state'])
+            return 3
+        except RemoteError as exc:
+            if exc.status == 409:
+                with self.lock:
+                    self.feed.update(availability='conflict', error='Spieldaten abgelehnt. Ein neues BronzeBrawl-Spiel verbinden.')
+                # Keep reporting liveness, but do not change the game's source.
+                try:
+                    self.network.request('POST', backend + '/companion/heartbeat', headers, {'gameId': gid, 'availability': 'conflict'})
+                except RemoteError:
+                    with self.lock:
+                        self.feed['connected'] = False
+                return 3
+            with self.lock:
+                self.feed['connected'] = False
+                if 400 <= exc.status < 500 and exc.status != 429:
+                    self.feed.update(enabled=False, error=f'Verbindung abgelehnt (HTTP {exc.status}). Mit v einen neuen Verbindungscode hinterlegen.')
+                    return 3
+            return min(12, self._feed_failure(exc))
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            return min(12, self._feed_failure(exc))
 
     def _feed_failure(self, exc):
         with self.lock:
@@ -280,7 +413,7 @@ class App:
         result = self.lcu.discover()
         with self.lock:
             self.candidates = result
-        return {'items': result, 'boundary': 'Fremde Spieler aus der Challenger-Rangliste deiner Region: letzte 20 Spiele von bis zu fünf Konten, nur Summoner’s Rift und aktueller Patch. Kein eigener Verlauf.'}
+        return {'items': result, 'boundary': 'Zufällig ausgewählte fremde Challenger-Spieler deiner Region, zuletzt geprüfte Spieler später; je 20 Spiele, fünf Konten pro Batch, höchstens 15 pro Suche. Nur neue Summoner’s-Rift-Matches des aktuellen Patches, kein eigener Verlauf.'}
 
     def fetch_replays(self):
         """Download foreign, current-patch Summoner's Rift matches via League.
@@ -291,7 +424,7 @@ class App:
         client = self.lcu
         candidates = client.discover()
         if not candidates:
-            return {'items': [], 'message': 'Keine fremden Summoner’s-Rift-Replays vom aktuellen Patch gefunden.'}
+            return {'items': [], 'message': 'Keine neuen Summoner’s-Rift-Replays im aktuellen Suchlauf gefunden. Erneut versuchen, um andere Spieler zu prüfen; bekannte Matches werden nicht wiederholt.', 'rankings': self.rankings()}
         items = []; errors = []
         for candidate in candidates:
             if self.stop_event.is_set():
@@ -318,11 +451,15 @@ class App:
         """Rank discovered foreign matches independently of slow file downloads."""
         with self.ranking_lock:
             with self.lock:
-                self.ranking_state.update(running=True, error=None, skipped=0)
+                self.ranking_state.update(running=True, error=None, skipped=0, notice=None)
             try:
                 client = self.lcu
                 current = client.current_version()
                 candidates = client.discover() if candidates is None else candidates
+                if not candidates:
+                    with self.lock:
+                        self.ranking_state.update(running=False, notice='Keine neuen Matches in diesem Suchlauf. Die letzte Rangliste bleibt erhalten; die nächste Suche prüft andere Spieler.')
+                    return self.rankings()
                 summoner = client.request('GET', '/lol-summoner/v1/current-summoner')
                 own = summoner.get('puuid') if isinstance(summoner, dict) else None
                 if not isinstance(own, str) or not own:
@@ -711,56 +848,58 @@ def create_feed_server(app, port=3002):
 
 
 def format_team_ratio(measure):
-    def number(value):
-        return str(int(value)) if value == int(value) else str(value).replace('.', ',')
-    value = 'nicht verfügbar' if measure['ratio'] is None else f"{measure['ratio']:.2f}".replace('.', ',')
-    return f"{number(measure['smaller'])} / {number(measure['larger'])} = {value}"
+    return '–' if measure['ratio'] is None else f"{measure['ratio'] * 100:.2f} %".replace('.', ',')
 
 
 def print_rankings(rankings, output_fn, sort_by='kills', descending=True):
     items = sort_rankings(rankings['items'], sort_by, descending)
     direction = 'absteigend' if descending else 'aufsteigend'
     output_fn(f'\nReplay-Ranking ({RANKING_LABELS[sort_by]} {direction})')
-    output_fn(f"{'Rang':>4} {'Match':<20} {'Kills (klein / groß)':>22} {'Gold am Ende (klein / groß)':>29} {'Carry':>8} {'Momentum':>8}  Datei")
+    output_fn(f"{'Rang':>4} {'Match':<20} {'Kills':>10} {'Gold (Ende)':>12} {'Carry':>8} {'Momentum':>8}  Datei")
     for index, item in enumerate(items, 1):
         scores = item['scores']
         values = [('–' if scores[key] is None else f'{scores[key]:.2f}').rjust(8) for key in ('carry', 'momentum')]
         rank = str(index) if scores[sort_by] is not None else '–'
         kills = format_team_ratio(scores['metrics']['killsRatio'])
         gold = format_team_ratio(scores['metrics']['goldRatio'])
-        output_fn(f"{rank:>4} {item['matchId']:<20} {kills:>22} {gold:>29}" + ''.join(values) + ('  lokal' if item.get('downloaded') else '  noch nicht geladen'))
+        output_fn(f"{rank:>4} {item['matchId']:<20} {kills:>10} {gold:>12}" + ''.join(values) + ('  lokal' if item.get('downloaded') else '  noch nicht geladen'))
     if not items:
         output_fn('Noch keine bewertbaren fremden Summoner’s-Rift-Matches gefunden.')
     if rankings.get('running'):
         output_fn('Bewertungen werden im Hintergrund aktualisiert.')
     if rankings.get('error'):
         output_fn(rankings['error'])
+    if rankings.get('notice'):
+        output_fn(rankings['notice'])
     if rankings.get('skipped'):
         output_fn(f"{rankings['skipped']} Matches ausgeschlossen oder Matchdaten nicht verfügbar.")
-    output_fn('Kills und Gold: kleinerer / größerer Teamwert; 1,00 = gleich, 0,50 = halb so viel. 0 / 0 ist nicht verfügbar.')
+    output_fn('Kills und Gold: kleinerer / größerer Teamwert × 100 %. 100 % = gleich, 50 % = halb so viel; nicht verfügbar = –.')
     output_fn('Gold = Summe goldEarned je Team am Spielende. Carry/Momentum: 0–100; ohne Timeline bleibt Momentum nicht verfügbar (–).')
     output_fn(SORT_HELP)
     output_fn('Beispiel: s gold auf = Gold-Verhältnis aufsteigend; ohne auf/ab wird absteigend sortiert.')
     output_fn(TERMINAL_HELP)
 
 
-def run_terminal(app, input_fn=None, output_fn=None, port=3002):
-    """Replays on demand; the local feed is available from startup, unpaired."""
+def run_terminal(app, input_fn=None, output_fn=None, port=3002, code_input_fn=None):
+    """Direct server feed in its own worker; replay commands remain local."""
     input_fn = input if input_fn is None else input_fn
     output_fn = print if output_fn is None else output_fn
-    try:
-        server = create_feed_server(app, port)
-    except OSError:
-        output_fn('Port 3002 wird bereits verwendet. Einen anderen Companion oder LoL-Proxy zuerst beenden.')
-        app.close()
-        return 1
-    worker = threading.Thread(target=lambda: server.serve_forever(poll_interval=0.25), name='companion-live-feed', daemon=True)
-    worker.start()
+    code_input_fn = getpass.getpass if code_input_fn is None else code_input_fn
     output_fn('BronzeBrawl Companion')
-    output_fn(f'Live-Feed bereit: http://127.0.0.1:{server.server_port}/lol-data')
+    output_fn('Direkt-Feed: Companion → HTTPS → BronzeBrawl. Kein lokaler Webserver erforderlich.')
     output_fn(TERMINAL_HELP)
     output_fn(SORT_HELP)
     display_lock = threading.RLock()
+    last_status = None
+    def show_connection(feed=None):
+        nonlocal last_status
+        with display_lock:
+            message = connection_status(app.feed if feed is None else feed)
+            if message != last_status:
+                output_fn(message)
+                last_status = message
+    show_connection()
+    app.start_workers(feed_only=True, on_feed=show_connection)
     sort_by = 'kills'; descending = True
     def show_rankings(rankings=None):
         with display_lock:
@@ -780,7 +919,14 @@ def run_terminal(app, input_fn=None, output_fn=None, port=3002):
             if command in ('q', 'quit', 'exit'):
                 break
             try:
-                if command in ('r', 'replays'):
+                if command in ('v', 'verbinden'):
+                    app.connect_code(code_input_fn('Verbindungscode aus der Haupt-App (Eingabe verborgen): ').strip())
+                    output_fn('Verbindung gespeichert. Server wird kontaktiert …')
+                elif command in ('t', 'status'):
+                    with display_lock:
+                        output_fn(connection_status(app.feed))
+                        output_fn(f"Erfolgreich gesendete Snapshots: {app.feed['sent']}")
+                elif command in ('r', 'replays'):
                     output_fn('Suche fremde Summoner’s-Rift-Replays über die Rangliste deiner Region. Patch wird automatisch erkannt ...')
                     result = app.fetch_replays()
                     output_fn(result['message'])
@@ -809,7 +955,6 @@ def run_terminal(app, input_fn=None, output_fn=None, port=3002):
     except (EOFError, KeyboardInterrupt):
         pass
     finally:
-        server.shutdown(); server.server_close(); worker.join(timeout=2)
         app.close()
     output_fn('Companion beendet.')
     return 0

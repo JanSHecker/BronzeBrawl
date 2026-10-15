@@ -16,6 +16,7 @@ export const REQUIRED_APPLICATION_COLUMNS: Record<string, readonly string[]> = {
   game: [
     'gameId', 'punishmentAmount', 'rewardAmount', 'rotationMode', 'defaultRotationCounter',
     'state', 'hostTokenHash', 'lastGameTime', 'lastFeedAt', 'rosterFingerprint', 'feedSnapshot',
+    'companionTokenHash', 'lastCompanionAt', 'companionAvailability',
   ],
   team: ['teamId', 'teamName', 'gameGameId'],
   champion: ['championId', 'championName', 'summonerName', 'teamTeamId', 'riotId', 'riotIdGameName', 'riotIdTagLine'],
@@ -55,6 +56,7 @@ export const REQUIRED_MIGRATIONS = [
   { name: 'InitialSchema1710000000000', timestamp: 1710000000000 },
   { name: 'GameflowSecurity1710000001000', timestamp: 1710000001000 },
   { name: 'GameflowEventIdentity1710000002000', timestamp: 1710000002000 },
+  { name: 'CompanionConnection1792100000000', timestamp: 1792100000000 },
 ] as const;
 
 export type DatabaseReadiness =
@@ -82,9 +84,7 @@ export async function checkDatabaseReadiness(
   try {
     const migrationRows = await dataSource.query(
       `SELECT timestamp, name FROM "typeorm_migrations"
-       WHERE (timestamp = $1 AND name = $2)
-          OR (timestamp = $3 AND name = $4)
-          OR (timestamp = $5 AND name = $6)`,
+       WHERE ${REQUIRED_MIGRATIONS.map((_, index) => `(timestamp = $${index * 2 + 1} AND name = $${index * 2 + 2})`).join(' OR ')}`,
       REQUIRED_MIGRATIONS.flatMap((migration) => [migration.timestamp, migration.name]),
     ) as Array<{ timestamp: string | number; name: string }>;
     const appliedMigrations = new Set(migrationRows.map((row) => `${row.timestamp}:${row.name}`));

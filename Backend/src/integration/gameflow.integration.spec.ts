@@ -6,6 +6,7 @@ import { GameflowService } from '../gameflow.service';
 import { Reward } from '../entities/reward.entity';
 import { Event } from '../entities/event.entity';
 import { Takedown } from '../entities/takedown.entity';
+import { Game } from '../entities/game.entity';
 
 const enabled = Boolean(process.env.TEST_DATABASE_URL);
 const settings = { punishmentAmount: 7, rewardAmount: 9, defaultCounter: 2, rotationMode: 'Kills' };
@@ -54,6 +55,23 @@ const feed = (events: any[] = []) => ({ allPlayers: roster, events: { Events: ev
     const event = await database.getRepository(Event).findOne({ where: { game: { gameId: game.gameId } }, relations: ['takedown', 'takedown.reward', 'takedown.punishment'] });
     expect(event.takedown.reward.amount).toBe(9);
     expect(event.takedown.punishment.amount).toBe(7);
+  });
+
+  test('companion connection persists across services, expires and revokes atomically', async () => {
+    const game = await service.runGame(settings);
+    const connection = await service.connectCompanion({ gameId: game.gameId }, game.hostToken);
+    const restarted = new GameflowService(database);
+    await restarted.companionHeartbeat({ gameId: game.gameId, availability: 'waiting' }, connection.token);
+    expect(await service.companionStatus(game.gameId, game.hostToken)).toMatchObject({ connected: true, feedFresh: false });
+    await restarted.ingestCompanion({ gameId: game.gameId, input: feed([kill(1)]) }, connection.token);
+    await service.ingestCompanion({ gameId: game.gameId, input: feed([kill(1)]) }, connection.token);
+    expect(await database.getRepository(Event).countBy({ game: { gameId: game.gameId } })).toBe(1);
+    expect(await service.companionStatus(game.gameId, game.hostToken)).toMatchObject({ connected: true, feedFresh: true });
+    await database.getRepository(Game).update(game.gameId, { lastCompanionAt: new Date(Date.now() - 16000) });
+    expect(await restarted.companionStatus(game.gameId, game.hostToken)).toMatchObject({ connected: false, feedFresh: false });
+    await service.disconnectCompanion({ gameId: game.gameId }, game.hostToken);
+    await expect(restarted.ingestCompanion({ gameId: game.gameId, input: feed() }, connection.token)).rejects.toMatchObject({ status: 403 });
+    expect(await restarted.companionStatus(game.gameId, game.hostToken)).toMatchObject({ paired: false, connected: false });
   });
 
   test('independent services serialize snapshots and consume each reward only once', async () => {

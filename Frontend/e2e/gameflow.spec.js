@@ -8,19 +8,19 @@ const roster = [
 ];
 const kill = (id, killer = "AuditAlice#TEST") => ({ EventID: id, EventName: "ChampionKill", EventTime: id, KillerName: killer, VictimName: "AuditBob#TEST", Assisters: ["AuditAssist#TEST"] });
 
-test("replay entry serves the companion but keeps protected data and feed inactive", async ({ page }) => {
+test("old replay entry redirects to companion without replay UI or localhost access", async ({ page }) => {
   const feedRequests = [];
-  page.on("request", request => { if (request.url().endsWith("/sendLoLInput")) feedRequests.push(request.url()); });
+   page.on("request", request => { if (/localhost:3002|127\.0\.0\.1:3002|sendLoLInput/.test(request.url())) feedRequests.push(request.url()); });
   await page.goto("/replays");
-  await expect(page.getByRole("heading", { name: "Replay-Verwaltung", exact: true })).toBeVisible();
-  await expect(page.getByLabel("Replay-Token")).toHaveAttribute("type", "password");
+  await expect(page).toHaveURL(/\/companion$/);
+  await expect(page.getByRole("heading", { name: "Companion", exact: true })).toBeVisible();
+  await expect(page.getByLabel("Replay-Token")).toHaveCount(0);
   await expect(page.getByRole("article")).toHaveCount(0);
   const response = await page.request.get("/downloads/bronze-brawl-companion.zip");
   expect(response.status()).toBe(200);
   expect((await response.body()).subarray(0, 2).toString()).toBe("PK");
   const unauthorized = await page.request.get("/api/replays");
-  expect(unauthorized.status()).toBe(401);
-  expect(unauthorized.headers()["cache-control"]).toBe("no-store");
+  expect(unauthorized.status()).toBe(404);
   expect(feedRequests).toEqual([]);
 });
 
@@ -45,26 +45,29 @@ test("two isolated players complete the secured gameflow and recover after failu
     return { gameId, token: sessionStorage.getItem(`bb:host:${gameId}`) };
   });
   const events = [{ EventID: 0, EventName: "GameStart", EventTime: 0 }];
+  await page.goto('/companion');
+  await page.getByRole('button', { name: 'Neuen Verbindungscode erstellen' }).click();
+  const code = await page.getByLabel('Verbindungscode').inputValue();
+  const connection = JSON.parse(Buffer.from(code.slice(4), 'base64url').toString());
+  expect(connection.gameId).toBe(host.gameId);
+  expect(connection.token).not.toBe(host.token);
+  const heartbeat = await page.request.post('/api/companion/heartbeat', {
+    headers: { 'X-Companion-Token': connection.token }, data: { gameId: host.gameId, availability: 'waiting' },
+  });
+  expect(heartbeat.ok()).toBe(true);
+  await expect(page.getByTestId('live-feed-status')).toContainText('verbunden – warte auf LoL');
   const upload = async () => {
-    const response = await page.request.post("/api/sendLoLInput", {
-      headers: { "X-Game-Token": host.token },
+    const response = await page.request.post("/api/companion/input", {
+      headers: { "X-Companion-Token": connection.token },
       data: { gameId: host.gameId, input: { allPlayers: roster, events: { Events: events }, gameData: { gameTime: 20, mapNumber: 11 } } },
     });
     expect(response.ok(), await response.text()).toBe(true);
   };
   await upload();
-  const monitor = page;
-  await monitor.route("http://localhost:3002/lol-data", route => route.fulfill({
-    status: 200, contentType: "application/json",
-    body: JSON.stringify({ allPlayers: roster, events: { Events: events }, gameData: { gameTime: 20, mapNumber: 11 } }),
-  }));
-  const hostUpload = monitor.waitForResponse(response => response.url().endsWith("/api/sendLoLInput"));
-  await monitor.goto("/lolApi");
-  const response = await hostUpload;
-  expect(response.ok()).toBe(true);
-  expect(response.request().postDataJSON().gameId).toBe(host.gameId);
-  expect(response.request().headers()["x-game-token"]).toBe(host.token);
-  await monitor.goto("/");
+  await expect(page.getByTestId('live-feed-status')).toContainText('Live-Daten kommen direkt');
+  // The host page is not the transport. Simulated companion posts continue
+  // through the independent request client while no host app is open.
+  await page.goto('about:blank');
   const blueContext = await browser.newContext();
   const redContext = await browser.newContext();
   try {

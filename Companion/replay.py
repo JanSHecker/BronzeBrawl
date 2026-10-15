@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import shutil
 import struct
 import subprocess
@@ -182,10 +183,71 @@ class Cache:
             (self.root / (match_id(identity) + '.json')).unlink(missing_ok=True)
 
 
+class DiscoveryHistory:
+    """Bounded local anti-repeat history; persist hashes, never player PUUIDs."""
+    def __init__(self, path=None):
+        self.path = Path(path) if path else None
+        self.lock = threading.RLock()
+        self.patch = None; self.matches = []; self.players = []
+        try:
+            if self.path is None or self.path.stat().st_size > 4 * 1024 * 1024:
+                return
+            data = json.loads(self.path.read_text(encoding='utf-8'))
+            if data.get('version') != 1 or not isinstance(data.get('patch'), str) or not re.fullmatch(r'\d{1,3}\.\d{1,3}', data['patch']):
+                return
+            matches, players = data.get('matches'), data.get('players')
+            if not isinstance(matches, list) or not isinstance(players, list):
+                return
+            self.patch = data['patch']
+            self.matches = list(dict.fromkeys(value for value in matches[-50000:] if isinstance(value, str) and MATCH.fullmatch(value)))
+            self.players = list(dict.fromkeys(value for value in players[-2000:] if isinstance(value, str) and re.fullmatch(r'[0-9a-f]{64}', value)))
+        except (OSError, ValueError, AttributeError, TypeError):
+            pass
+
+    def for_patch(self, patch):
+        if self.patch != patch:
+            self.patch = patch; self.matches = []; self.players = []
+
+    def remember_matches(self, identities):
+        self.matches = list(dict.fromkeys(self.matches + list(identities)))[-50000:]
+
+    def seed_rankings(self, items):
+        with self.lock:
+            for item in items:
+                patch = item.get('patch')
+                if isinstance(patch, str) and re.fullmatch(r'\d{1,3}\.\d{1,3}', patch):
+                    if self.patch is None:
+                        self.patch = patch
+                    if patch == self.patch and isinstance(item.get('matchId'), str) and MATCH.fullmatch(item['matchId']):
+                        self.remember_matches([item['matchId']])
+
+    @staticmethod
+    def player_key(puuid):
+        return hashlib.sha256(puuid.encode()).hexdigest()
+
+    def ordered_players(self, players, rng):
+        result = list(players)
+        rng.shuffle(result)  # Randomize unvisited players and ties, not rank order.
+        order = {value: index for index, value in enumerate(self.players)}
+        result.sort(key=lambda value: order.get(self.player_key(value), -1))
+        return result
+
+    def remember_player(self, puuid):
+        key = self.player_key(puuid)
+        self.players = [value for value in self.players if value != key] + [key]
+        self.players = self.players[-2000:]
+
+    def save(self):
+        if self.path:
+            atomic_json(self.path, {'version': 1, 'patch': self.patch, 'matches': self.matches, 'players': self.players})
+
+
 class LCU:
-    def __init__(self, network, league_dir=None):
+    def __init__(self, network, league_dir=None, discovery=None, rng=None):
         self.network = network
         self.league_dir = Path(league_dir) if league_dir else None
+        self.discovery = discovery if discovery is not None else DiscoveryHistory()
+        self.rng = rng if rng is not None else secrets.SystemRandom()
 
     def lockfile(self):
         cached = getattr(self, '_lockfile', None)
@@ -248,6 +310,12 @@ class LCU:
         return result
 
     def discover(self, limit=20):
+        # The startup ranking scan and a replay request may run concurrently.
+        # Selection + remembering is one operation so they cannot return duplicates.
+        with self.discovery.lock:
+            return self._discover(limit)
+
+    def _discover(self, limit):
         current = self.current_version()
         summoner = self.request('GET', '/lol-summoner/v1/current-summoner')
         own_puuid = summoner.get('puuid') if isinstance(summoner, dict) else None
@@ -268,40 +336,50 @@ class LCU:
                     players.append(puuid)
         if not players:
             raise ReplayError('Keine fremden Spieler über die öffentliche Rangliste verfügbar. Der eigene Verlauf wird nicht verwendet.')
-        entries = []; failure = None; histories = 0
-        for puuid in players[:5]:
+        self.discovery.for_patch(patch_of(current))
+        players = self.discovery.ordered_players(players, self.rng)
+        result = []; failure = None; histories = 0
+        seen = set(self.discovery.matches)
+        # Try five fresh player histories first, and at most two extra batches
+        # when overlaps/old patches yield no new matches. Never loop indefinitely.
+        search_players = players[:15]
+        for index, puuid in enumerate(search_players):
             route = '/lol-match-history/v1/products/lol/' + urllib.parse.quote(puuid, safe='') + '/matches?begIndex=0&endIndex=19'
+            self.discovery.remember_player(puuid)
             try:
                 history = self.request('GET', route)
             except RemoteError as exc:
                 failure = exc
-                continue
-            games = history.get('games', {}) if isinstance(history, dict) else {}
-            games = games.get('games', []) if isinstance(games, dict) else games
-            if isinstance(games, list):
-                histories += 1
-                entries.extend(games[:max(0, min(limit, 20))])
+                history = None
+            if history is not None:
+                games = history.get('games', {}) if isinstance(history, dict) else {}
+                games = games.get('games', []) if isinstance(games, dict) else games
+                if isinstance(games, list):
+                    histories += 1
+                    for entry in games[:max(0, min(limit, 20))]:
+                        if not isinstance(entry, dict) or entry.get('mapId') != 11:
+                            continue
+                        identities = entry.get('participantIdentities', [])
+                        if not isinstance(identities, list):
+                            continue
+                        if any(isinstance(p, dict) and isinstance(p.get('player'), dict) and p['player'].get('puuid') == own_puuid for p in identities):
+                            continue
+                        try:
+                            v = client_version(entry.get('gameVersion'))
+                            platform = str(entry.get('platformId', '')).upper()
+                            identity = match_id(platform + '_' + str(entry.get('gameId', '')))
+                            if patch_of(v) == patch_of(current) and identity not in seen:
+                                result.append({'matchId': identity, 'gameVersion': v, 'mapId': 11})
+                                seen.add(identity)
+                        except ReplayError:
+                            continue
+            if result and (index + 1) % 5 == 0:
+                break
+        self.rng.shuffle(result)
+        self.discovery.remember_matches(item['matchId'] for item in result)
+        self.discovery.save()
         if not histories and failure:
             raise ReplayError('Fremde Match-Verläufe sind momentan nicht verfügbar. Bitte später erneut versuchen.') from None
-        result = []
-        seen = set()
-        for entry in entries:
-            if not isinstance(entry, dict) or entry.get('mapId') != 11:
-                continue
-            identities = entry.get('participantIdentities', [])
-            if not isinstance(identities, list):
-                continue
-            if any(isinstance(p, dict) and isinstance(p.get('player'), dict) and p['player'].get('puuid') == own_puuid for p in identities):
-                continue
-            try:
-                v = client_version(entry.get('gameVersion'))
-                platform = str(entry.get('platformId', '')).upper()
-                identity = match_id(platform + '_' + str(entry.get('gameId', '')))
-                if patch_of(v) == patch_of(current) and identity not in seen:
-                    result.append({'matchId': identity, 'gameVersion': v, 'mapId': 11})
-                    seen.add(identity)
-            except ReplayError:
-                continue
         return result
 
     def analyze(self, identity, own_puuid, current_version):

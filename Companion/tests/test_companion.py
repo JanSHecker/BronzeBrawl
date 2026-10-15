@@ -1,5 +1,6 @@
 """Tests use structural replay fixtures and fake transports, not real match recordings."""
 import hashlib
+import base64
 import http.client
 import json
 from pathlib import Path
@@ -34,6 +35,11 @@ def terminal_scores(kills=(20, 30), gold=(43000, 50000), carry=90, momentum=None
             'carry': carry, 'momentum': momentum, 'metrics': {'killsRatio': kill_ratio, 'goldRatio': gold_ratio}}
 
 
+def connection_code(game_id=8, token='a' * 64, backend='https://app.example/api'):
+    raw = json.dumps({'backendUrl': backend, 'gameId': game_id, 'token': token}).encode()
+    return 'BB1.' + base64.urlsafe_b64encode(raw).decode().rstrip('=')
+
+
 class FakeNetwork:
     def __init__(self):
         self.calls = []
@@ -59,6 +65,161 @@ class FakeNetwork:
     def download(self, url, target, headers=None):
         self.calls.append(('GET', url, headers, None, False))
         Path(target).write_bytes(self.bytes)
+
+
+class DirectNetwork(FakeNetwork):
+    def __init__(self):
+        super().__init__()
+        self.unavailable = False
+        self.sent = threading.Event()
+        self.state = 'live'
+
+    def request(self, method, url, headers=None, body=None, local=False):
+        if '/companion/' not in url:
+            if self.unavailable and url.endswith('/allgamedata'):
+                raise RemoteError(503)
+            return super().request(method, url, headers, body, local)
+        self.calls.append((method, url, headers or {}, body, local))
+        if self.fail:
+            raise RemoteError(self.fail)
+        if url.endswith('/heartbeat'):
+            return {'ok': True, 'gameId': body['gameId']}
+        self.sent.set()
+        return {'gameId': body['gameId'], 'state': self.state}
+
+
+class DirectFeedTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.net = DirectNetwork()
+        self.app = App(self.tmp.name, network=self.net)
+        self.app.connect_code(connection_code())
+
+    def tearDown(self):
+        self.app.close(); self.tmp.cleanup()
+
+    def test_direct_sender_uses_scoped_token_and_fresh_reads_even_when_clock_is_paused(self):
+        for _ in range(2):
+            self.assertEqual(self.app.feed_tick(), 3)
+        inputs = [call for call in self.net.calls if call[1].endswith('/companion/input')]
+        self.assertEqual(len(inputs), 2)
+        self.assertTrue(all(call[1] == 'https://app.example/api/companion/input' for call in inputs))
+        self.assertTrue(all(call[2] == {'X-Companion-Token': 'a' * 64} for call in inputs))
+        self.assertEqual(inputs[0][3], {'gameId': 8, 'input': self.net.data})
+        self.assertEqual(sum(call[1].endswith('/allgamedata') for call in self.net.calls), 2)
+        self.assertTrue(self.app.feed['connected'])
+        self.assertEqual(self.app.feed['sent'], 2)
+
+    def test_heartbeat_proves_connection_without_lol_and_recovers_automatically(self):
+        self.net.unavailable = True
+        self.app.feed_tick()
+        self.assertTrue(self.app.feed['connected'])
+        self.assertIn('warte auf LoL', companion.connection_status(self.app.feed))
+        self.assertEqual(self.net.calls[-1][3]['availability'], 'waiting')
+        self.assertFalse(self.net.sent.is_set())
+        self.net.unavailable = False
+        self.app.feed_tick()
+        self.assertEqual(self.app.feed['sent'], 1)
+        self.net.fail = 503
+        for _ in range(8):
+            self.assertLessEqual(self.app.feed_tick(), 12)
+            self.assertTrue(self.app.feed['enabled'])
+            self.assertFalse(self.app.feed['connected'])
+        self.net.fail = None
+        self.app.feed_tick()
+        self.assertTrue(self.app.feed['connected'])
+
+    def test_restart_restores_only_restricted_connection_and_revocation_stops_sender(self):
+        self.app.feed_tick()
+        restored = App(self.tmp.name, network=self.net)
+        try:
+            self.assertEqual(restored.companion_token, 'a' * 64)
+            self.assertFalse(restored.host_token)
+            self.assertTrue(restored.feed['enabled'])
+            self.assertFalse(restored.feed['connected'])
+            restored.feed_tick()
+            self.net.fail = 403
+            restored.feed_tick()
+            self.assertFalse(restored.feed['enabled'])
+            self.assertIn('Verbindung abgelehnt', restored.feed['error'])
+            count = len(self.net.calls)
+            restored.feed_tick()
+            self.assertEqual(len(self.net.calls), count)
+        finally:
+            restored.close()
+
+    def test_changed_game_is_not_forwarded_but_heartbeat_continues(self):
+        self.app.feed_tick()
+        self.net.data['gameData']['gameTime'] = 0
+        self.app.feed_tick()
+        self.assertEqual(self.app.feed['sent'], 1)
+        self.assertEqual(self.app.feed['availability'], 'conflict')
+        self.assertEqual(self.net.calls[-1][3]['availability'], 'conflict')
+        self.assertTrue(self.app.feed['connected'])
+        self.app.connect_code(connection_code(game_id=9))
+        self.app.feed_tick()
+        self.assertEqual(self.app.feed['sent'], 1)
+
+    def test_bad_codes_are_rejected_without_changing_destination_or_echoing_secrets(self):
+        for code in ('bad', 'BB1.@@@', connection_code(token='wrong'), connection_code(game_id=True), connection_code(backend='http://example.com/api')):
+            with self.assertRaisesRegex(ReplayError, 'Verbindungscode ungültig'):
+                self.app.connect_code(code)
+        self.assertEqual(self.app.backend, 'https://app.example/api')
+        self.assertNotIn('a' * 64, json.dumps(self.app.status()))
+        self.app.forget()
+        self.assertFalse((Path(self.tmp.name) / 'connection.json').exists())
+
+    def test_game_end_keeps_heartbeat_without_resubmitting_a_finished_game(self):
+        self.net.state = 'ended'
+        self.app.feed_tick()
+        self.net.data['gameData']['gameTime'] += 1
+        self.app.feed_tick()
+        self.assertTrue(self.app.feed['connected'])
+        self.assertEqual(self.app.feed['sent'], 1)
+        self.assertIn('Spiel beendet', companion.connection_status(self.app.feed))
+        self.assertTrue(self.net.calls[-1][1].endswith('/heartbeat'))
+
+
+class DirectHTTPTests(unittest.TestCase):
+    def test_real_http_sender_needs_no_browser_or_local_feed_server(self):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        received = []
+        class Backend(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+            def do_POST(self):
+                data = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+                received.append((self.path, self.headers.get('X-Companion-Token'), data))
+                response = {'ok': True, 'gameId': data['gameId']} if self.path.endswith('/heartbeat') else {'gameId': data['gameId'], 'state': 'live'}
+                raw = json.dumps(response).encode()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+        class LocalLoL(Network):
+            def request(self, method, url, headers=None, body=None, local=False):
+                if local:
+                    return FakeNetwork().data
+                return super().request(method, url, headers, body, local)
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Backend)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        try:
+            with tempfile.TemporaryDirectory() as root:
+                app = App(root, network=LocalLoL(), allow_http_local=True)
+                try:
+                    app.connect_code(connection_code(backend=f'http://127.0.0.1:{server.server_port}/api'))
+                    app.feed_tick(); app.feed_tick()
+                    self.assertEqual(app.feed['sent'], 2)
+                    self.assertTrue(app.feed['connected'])
+                    self.assertEqual([row[0] for row in received], ['/api/companion/heartbeat', '/api/companion/input'] * 2)
+                    self.assertTrue(all(row[1] == 'a' * 64 and row[2]['gameId'] == 8 for row in received))
+                    self.assertEqual(received[1][2]['input'], FakeNetwork().data)
+                finally:
+                    app.close()
+        finally:
+            server.shutdown(); server.server_close(); worker.join()
 
 
 class ReplayTests(unittest.TestCase):
@@ -351,16 +512,21 @@ class TerminalTests(unittest.TestCase):
         self.assertIn('s gold auf = Gold-Verhältnis aufsteigend', output[-2])
         self.assertEqual(output[-1], companion.TERMINAL_HELP)
 
-    def test_terminal_displays_two_ratios_with_raw_team_totals_and_no_mixed_score(self):
+    def test_terminal_displays_only_percentages_without_absolute_team_totals_or_mixed_score(self):
         output = []
         companion.print_rankings({'items': [{'matchId': 'EUW1_123', 'scores': terminal_scores()}]}, output.append)
         text = '\n'.join(output)
-        self.assertIn('20 / 30 = 0,67', text)
-        self.assertIn('43000 / 50000 = 0,86', text)
-        self.assertIn('Gold am Ende', text)
+        self.assertIn('66,67 %', text)
+        self.assertIn('86,00 %', text)
+        self.assertNotIn('20 / 30', text)
+        self.assertNotIn('43000', text)
+        self.assertNotIn('50000', text)
+        self.assertIn('Gold (Ende)', text)
         self.assertNotIn('Balance', text)
         self.assertNotIn('Gesamt', text)
-        self.assertEqual(companion.format_team_ratio(team_ratio(0, 0)), '0 / 0 = nicht verfügbar')
+        self.assertEqual(companion.format_team_ratio(team_ratio(0, 0)), '–')
+        self.assertEqual(companion.format_team_ratio(team_ratio(0, 10)), '0,00 %')
+        self.assertEqual(companion.format_team_ratio(team_ratio(10, 10)), '100,00 %')
 
     def test_terminal_shows_cached_rankings_and_sorts_without_new_downloads(self):
         with tempfile.TemporaryDirectory() as root:
@@ -421,7 +587,7 @@ class TerminalTests(unittest.TestCase):
             self.assertFalse(app.feed['enabled'])
             text = '\n'.join(output)
             self.assertIn('EUW1-123.rofl', text)
-            self.assertIn('Live-Feed bereit:', text)
+            self.assertIn('Direkt-Feed:', text)
             self.assertNotIn('Spiel verbinden', text)
             self.assertNotIn('Token', ''.join(prompts))
             self.assertNotIn('Spiel-ID', ''.join(prompts))
@@ -441,23 +607,20 @@ class TerminalTests(unittest.TestCase):
             server.assert_not_called()
             browser.assert_not_called()
 
-    def test_feed_is_available_during_replay_download_without_pairing(self):
+    def test_direct_sender_runs_during_replay_download_without_webserver(self):
         with tempfile.TemporaryDirectory() as root:
-            app = App(root, network=FakeNetwork())
+            net = DirectNetwork()
+            app = App(root, network=net)
             output = []
-            commands = iter(('r', 'q'))
+            commands = iter(('v', 'r', 'q'))
             def fetch():
-                address = next(line for line in output if line.startswith('Live-Feed bereit: ')).split('http://', 1)[1]
-                host = address.split('/')[0]
-                connection = http.client.HTTPConnection(host)
-                connection.request('GET', '/lol-data')
-                response = connection.getresponse()
-                self.assertEqual(response.status, 200)
-                self.assertEqual(json.loads(response.read()), app.network.data)
-                connection.close()
+                self.assertTrue(net.sent.wait(5), 'Background sender did not run during replay command')
                 return {'items': [], 'message': 'Keine Replays.'}
-            with patch.object(app, 'fetch_replays', side_effect=fetch):
-                self.assertEqual(run_terminal(app, input_fn=lambda prompt: next(commands), output_fn=output.append, port=0), 0)
+            with patch.object(app, 'fetch_replays', side_effect=fetch), \
+                 patch.object(companion, 'create_feed_server') as server:
+                self.assertEqual(run_terminal(app, input_fn=lambda prompt: next(commands), output_fn=output.append, code_input_fn=lambda prompt: connection_code()), 0)
+            server.assert_not_called()
+            self.assertNotIn('a' * 64, '\n'.join(output))
 
 
 class PassiveFeedTests(unittest.TestCase):

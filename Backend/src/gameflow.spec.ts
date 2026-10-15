@@ -67,6 +67,40 @@ async function setup() {
 }
 beforeEach(()=>{db=new MemoryDB(); service=new Service(db as any);});
 describe('gameflow contract',()=>{
+  test('companion uses a scoped durable capability, heartbeat, expiry and revocation', async () => {
+    const g = await service.runGame(settings);
+    await expect(service.connectCompanion({ gameId: g.gameId }, 'wrong')).rejects.toMatchObject({ status: 403 });
+    const connection = await service.connectCompanion({ gameId: g.gameId }, g.hostToken);
+    expect(connection.token).toMatch(/^[a-f0-9]{64}$/);
+    expect(connection.token).not.toBe(g.hostToken);
+    expect(db.all(Game)[0].companionTokenHash).not.toBe(connection.token);
+    await expect(service.companionHeartbeat({ gameId: g.gameId, availability: 'waiting' }, g.hostToken)).rejects.toMatchObject({ status: 403 });
+    await expect(service.ingest({ gameId: g.gameId, input: feed() }, connection.token)).rejects.toMatchObject({ status: 403 });
+    await service.companionHeartbeat({ gameId: g.gameId, availability: 'waiting' }, connection.token);
+    expect(await service.companionStatus(g.gameId, g.hostToken)).toMatchObject({ paired: true, connected: true, feedFresh: false, availability: 'waiting' });
+    service = new Service(db as any);
+    await service.ingestCompanion({ gameId: g.gameId, input: feed([kill()]) }, connection.token);
+    await service.ingestCompanion({ gameId: g.gameId, input: feed([kill()]) }, connection.token);
+    expect(db.all(Event)).toHaveLength(1);
+    expect(await service.companionStatus(g.gameId, g.hostToken)).toMatchObject({ connected: true, feedFresh: true });
+    db.all(Game)[0].lastCompanionAt = new Date(Date.now() - 16000);
+    expect(await service.companionStatus(g.gameId, g.hostToken)).toMatchObject({ paired: true, connected: false, feedFresh: false });
+    const next = await service.connectCompanion({ gameId: g.gameId }, g.hostToken);
+    await expect(service.companionHeartbeat({ gameId: g.gameId, availability: 'live' }, connection.token)).rejects.toMatchObject({ status: 403 });
+    await service.disconnectCompanion({ gameId: g.gameId }, g.hostToken);
+    await expect(service.ingestCompanion({ gameId: g.gameId, input: feed() }, next.token)).rejects.toMatchObject({ status: 403 });
+    expect(await service.companionStatus(g.gameId, g.hostToken)).toMatchObject({ paired: false, connected: false });
+    expect(JSON.stringify(await service.getSettings(g.gameId))).not.toMatch(/companionToken|lastCompanion/);
+  });
+  test('companion status and credentials are game scoped and invalid heartbeats do not change state', async () => {
+    const first = await service.runGame(settings);
+    const second = await service.runGame(settings);
+    const connection = await service.connectCompanion({ gameId: first.gameId }, first.hostToken);
+    await expect(service.companionStatus(first.gameId, second.hostToken)).rejects.toMatchObject({ status: 403 });
+    await expect(service.companionHeartbeat({ gameId: second.gameId, availability: 'live' }, connection.token)).rejects.toMatchObject({ status: 403 });
+    await expect(service.companionHeartbeat({ gameId: first.gameId, availability: 'garbage' }, connection.token)).rejects.toMatchObject({ status: 400 });
+    expect(await service.companionStatus(first.gameId, first.hostToken)).toMatchObject({ connected: false });
+  });
   test('start immediately persists exactly two semantic teams without a feed',async()=>{
     const g=await service.runGame(settings);
     expect(g).toMatchObject({gameId:1,state:'waiting_for_feed',settings:{punishmentAmount:7,rewardAmount:9,defaultCounter:2}});

@@ -23,11 +23,10 @@ import { Reward } from './entities/reward.entity';
 import { RewardService } from './reward.service';
 import { DistributionService } from './distribution.service';
 import { GameflowService } from './gameflow.service';
-import { ReplayModule } from './replays/replay.module';
+import { CompanionController } from './companion.controller';
 
 @Module({
   imports: [
-    ReplayModule,
     DatabaseModule,
     ConfigModule.forRoot({ isGlobal: true }),
     TypeOrmModule.forFeature([
@@ -41,7 +40,7 @@ import { ReplayModule } from './replays/replay.module';
       Reward,
     ]),
   ],
-  controllers: [AppController],
+  controllers: [AppController, CompanionController],
   providers: [
     AppService,
     LolAPIService,

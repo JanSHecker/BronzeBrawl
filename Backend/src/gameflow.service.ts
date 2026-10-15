@@ -34,9 +34,8 @@ export class GameflowService {
   }
 
   private id(value: any, field: string): number {
-    const number = typeof value === 'number' ? value : Number(value);
-    if (!Number.isInteger(number) || number <= 0) this.fail(`invalid ${field}`);
-    return number;
+    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) this.fail(`invalid ${field}`);
+    return value;
   }
 
   private async rows(type: any, store: Store = this.database, relations: string[] = []): Promise<any[]> {
@@ -64,7 +63,8 @@ export class GameflowService {
 
   private relationId(value: any): number | undefined {
     if (value === null || value === undefined) return undefined;
-    return typeof value === 'object' ? value.gameId ?? value.teamId ?? value.playerId ?? value.championId : Number(value);
+    const candidate = typeof value === 'object' ? value.gameId ?? value.teamId ?? value.playerId ?? value.championId : value;
+    return typeof candidate === 'number' && Number.isSafeInteger(candidate) && candidate > 0 ? candidate : undefined;
   }
 
   private gameId(value: any): number | undefined {
@@ -83,7 +83,12 @@ export class GameflowService {
     return this.relationId(value);
   }
 
-  private async transaction<T>(work: (store: Store) => Promise<T>): Promise<T> {
+  private isPostgres(): boolean {
+    return this.database?.options?.type === 'postgres'
+      || this.database?.driver?.options?.type === 'postgres';
+  }
+
+  private async transaction<T>(work: (store: Store) => Promise<T>, gameId?: number): Promise<T> {
     // The behavioral contract uses a tiny in-memory repository. It cannot use
     // TypeORM's transaction API, so provide the same serialization and rollback
     // guarantees without cloning class constructors used as Map keys.
@@ -104,8 +109,16 @@ export class GameflowService {
       db.tail = task.catch(() => undefined);
       return task;
     }
-    if (this.database?.manager?.transaction) return this.database.manager.transaction(work);
-    if (this.database?.transaction) return this.database.transaction(work);
+    const transactionalWork = async (store: Store): Promise<T> => {
+      if (gameId !== undefined && this.isPostgres() && store?.query) {
+        // Advisory xact locks are held by PostgreSQL until this transaction
+        // commits, including across multiple application processes.
+        await store.query('SELECT pg_advisory_xact_lock($1)', [gameId]);
+      }
+      return work(store);
+    };
+    if (this.database?.manager?.transaction) return this.database.manager.transaction(transactionalWork);
+    if (this.database?.transaction) return this.database.transaction(transactionalWork);
     return work(this.database);
   }
 
@@ -125,10 +138,13 @@ export class GameflowService {
   }
 
   private numberSetting(value: any, name: string): number {
-    if (typeof value === 'string' && !/^\d+$/.test(value)) this.fail(`invalid ${name}`);
-    const number = Number(value);
-    if (!Number.isInteger(number) || number <= 0 || number > 100) this.fail(`invalid ${name}`);
-    return number;
+    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0 || value > 100) this.fail(`invalid ${name}`);
+    return value;
+  }
+
+  private gameTime(value: any): number {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) this.fail('invalid gameTime');
+    return value;
   }
 
   private publicGame(game: any, hostToken?: string): any {
@@ -310,8 +326,9 @@ export class GameflowService {
       const input = request.input;
       const fingerprint = this.rosterFingerprint(roster);
       if (game.rosterFingerprint && game.rosterFingerprint !== fingerprint) this.fail('roster changed', HttpStatus.CONFLICT);
-      const gameTime = input.gameData?.gameTime;
-      if (game.lastGameTime !== null && gameTime !== undefined && Number(gameTime) < Number(game.lastGameTime)) {
+      const gameTime = input.gameData?.gameTime === undefined ? undefined : this.gameTime(input.gameData.gameTime);
+      if (input.gameData?.mapNumber !== undefined) this.gameTime(input.gameData.mapNumber);
+      if (game.lastGameTime !== null && gameTime !== undefined && gameTime < game.lastGameTime) {
         this.fail('game clock moved backwards', HttpStatus.CONFLICT);
       }
 
@@ -338,16 +355,20 @@ export class GameflowService {
       }
       const players = (await this.rows(Player, store, ['game', 'team', 'champion'])).filter((player) => this.gameId(player.game) === gameId);
       const existingEvents = (await this.rows(Event, store, ['game'])).filter((event) => this.gameId(event.game) === gameId);
-      const events = [...input.events.Events].sort((a, b) => Number(a.EventID) - Number(b.EventID));
+      const events = [...input.events.Events].sort((a, b) => a.EventID - b.EventID);
       for (const raw of events) {
-        if (!Number.isInteger(Number(raw?.EventID)) || Number(raw.EventID) <= 0 || typeof raw.EventName !== 'string') this.fail('invalid event');
-        const prior = existingEvents.find((event) => Number(event.ingameId) === Number(raw.EventID));
+        if (!raw || typeof raw.EventID !== 'number' || !Number.isSafeInteger(raw.EventID) || raw.EventID <= 0
+          || typeof raw.EventName !== 'string' || !raw.EventName.trim()) this.fail('invalid event');
+        if (raw.EventTime !== undefined && (typeof raw.EventTime !== 'number' || !Number.isFinite(raw.EventTime) || raw.EventTime < 0)) {
+          this.fail('invalid event time');
+        }
+        const prior = existingEvents.find((event) => event.ingameId === raw.EventID);
         if (prior) {
           if (!this.sameEvent(prior, raw)) this.fail('event identity was reused', HttpStatus.CONFLICT);
           continue;
         }
         const event = await this.save(Event, {
-          ingameId: Number(raw.EventID), eventType: raw.EventName, payload: raw, game,
+          ingameId: raw.EventID, eventType: raw.EventName, payload: raw, game,
         }, store);
         existingEvents.push(event);
         if (raw.EventName === 'GameEnd') {
@@ -386,17 +407,18 @@ export class GameflowService {
         }
       }
       game.rosterFingerprint = fingerprint;
-      if (gameTime !== undefined) game.lastGameTime = Number(gameTime);
+      if (gameTime !== undefined) game.lastGameTime = gameTime;
       game.feedSnapshot = input;
       game.lastFeedAt = new Date();
       if (game.state !== 'ended') game.state = 'live';
       await this.save(Game, game, store);
       return this.publicGame(game);
-    });
+    }, gameId);
   }
 
   async createPlayer(input: { playerName: any; game: any }): Promise<any> {
     if (typeof input?.playerName !== 'string' || !input.playerName.trim()) this.fail('invalid playerName');
+    const gameId = this.id(input?.game, 'gameId');
     return this.transaction(async (store) => {
       const game = await this.getGameOrFail(input.game, store);
       if (game.state === 'ended') this.fail('game has ended', HttpStatus.CONFLICT);
@@ -411,7 +433,7 @@ export class GameflowService {
         game: game.gameId,
         playerToken: rawToken,
       };
-    });
+    }, gameId);
   }
 
   async getTeams(gameValue: any): Promise<any> {
@@ -430,6 +452,9 @@ export class GameflowService {
   }
 
   async joinTeam(input: { player: any; team: any }, token: string): Promise<any> {
+    const player = await this.getPlayerOrFail(input?.player);
+    const gameId = this.gameId(player.game);
+    if (!gameId) this.fail('invalid gameId');
     return this.transaction(async (store) => {
       const player = await this.authorizePlayer(input?.player, token, store);
       const teamId = this.id(input?.team, 'teamId');
@@ -442,7 +467,7 @@ export class GameflowService {
       player.team = team;
       await this.save(Player, player, store);
       return this.publicPlayer(player);
-    });
+    }, gameId);
   }
 
   async getAllChampions(gameValue: any): Promise<any> {
@@ -462,6 +487,9 @@ export class GameflowService {
   }
 
   async chooseChampion(input: { player: any; champion: any; counter?: any; killCounter?: any }, token: string): Promise<any> {
+    const player = await this.getPlayerOrFail(input?.player);
+    const gameId = this.gameId(player.game);
+    if (!gameId) this.fail('invalid gameId');
     return this.transaction(async (store) => {
       const player = await this.authorizePlayer(input?.player, token, store);
       if (!player.team) this.fail('join a team before choosing a champion', HttpStatus.CONFLICT);
@@ -486,7 +514,7 @@ export class GameflowService {
       await this.save(Champion, champion, store);
       await this.save(Player, player, store);
       return this.publicChampion(champion);
-    });
+    }, gameId);
   }
 
   async getSettings(gameValue: any): Promise<any> {
@@ -537,6 +565,12 @@ export class GameflowService {
   }
 
   async confirmReward(request: any, token: string): Promise<any> {
+    const rewardId = this.id(request?.id, 'rewardId');
+    const reward = await this.findOne(Reward, (row) => row.rewardId === rewardId, this.database, ['player']);
+    if (!reward) this.fail('reward not found', HttpStatus.NOT_FOUND);
+    const owner = await this.getPlayerOrFail(this.playerId(reward.player));
+    const gameId = this.gameId(owner.game);
+    if (!gameId) this.fail('invalid gameId');
     return this.transaction(async (store) => {
       const rewardId = this.id(request?.id, 'rewardId');
       const reward = await this.findOne(Reward, (row) => row.rewardId === rewardId, store, ['player', 'takedown']);
@@ -556,10 +590,16 @@ export class GameflowService {
       reward.distributed = true;
       await this.save(Reward, reward, store);
       return this.publicPunishment(punishment);
-    });
+    }, gameId);
   }
 
   async confirmPunishment(request: any, token: string): Promise<any> {
+    const punishmentId = this.id(request?.id, 'punishmentId');
+    const existing = await this.findOne(Punishment, (row) => row.punishmentId === punishmentId, this.database, ['player']);
+    if (!existing) this.fail('punishment not found', HttpStatus.NOT_FOUND);
+    const owner = await this.getPlayerOrFail(this.playerId(existing.player));
+    const gameId = this.gameId(owner.game);
+    if (!gameId) this.fail('invalid gameId');
     return this.transaction(async (store) => {
       const punishmentId = this.id(request?.id, 'punishmentId');
       const punishment = await this.findOne(Punishment, (row) => row.punishmentId === punishmentId, store, ['player']);
@@ -568,10 +608,13 @@ export class GameflowService {
       punishment.recieved = true;
       await this.save(Punishment, punishment, store);
       return this.publicPunishment(punishment);
-    });
+    }, gameId);
   }
 
   async deletePlayer(request: { id: any }, token: string): Promise<void> {
+    const existing = await this.getPlayerOrFail(request?.id);
+    const gameId = this.gameId(existing.game);
+    if (!gameId) this.fail('invalid gameId');
     return this.transaction(async (store) => {
       const player = await this.authorizePlayer(request?.id, token, store);
       const punishments = await this.rows(Punishment, store, ['player', 'distributor']);
@@ -587,6 +630,6 @@ export class GameflowService {
         await this.save(Champion, player.champion, store);
       }
       await this.remove(Player, player, store);
-    });
+    }, gameId);
   }
 }

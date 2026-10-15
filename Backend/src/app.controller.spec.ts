@@ -10,10 +10,10 @@ import { RewardService } from './reward.service';
 import { DistributionService } from './distribution.service';
 import { TeamService } from './team.service';
 import { getDataSourceToken } from '@nestjs/typeorm';
-import { REQUIRED_APPLICATION_COLUMNS, REQUIRED_FOREIGN_KEYS } from './database/readiness';
+import { REQUIRED_APPLICATION_COLUMNS, REQUIRED_FOREIGN_KEYS, REQUIRED_MIGRATIONS, REQUIRED_UNIQUE_CONSTRAINTS } from './database/readiness';
 
 const readinessQuery = jest.fn().mockImplementation((sql: string) => {
-  if (sql.includes('typeorm_migrations')) return [{ '?column?': 1 }];
+  if (sql.includes('typeorm_migrations')) return [...REQUIRED_MIGRATIONS];
   if (sql.includes('information_schema.columns')) {
     return Object.entries(REQUIRED_APPLICATION_COLUMNS).flatMap(([table_name, columns]) =>
       columns.map((column_name) => ({ table_name, column_name })));
@@ -30,6 +30,12 @@ const readinessQuery = jest.fn().mockImplementation((sql: string) => {
     rows.push(...columns.map((column_name, index) => ({
       table_name, constraint_name: `fk_${table_name}_${column_name}`, constraint_type: 'FOREIGN KEY', column_name,
       ordinal_position: index + 1, referenced_table_name, referenced_column_name: referencedColumns[index],
+    })));
+  }
+  for (const [table_name, columns] of REQUIRED_UNIQUE_CONSTRAINTS) {
+    rows.push(...columns.map((column_name, index) => ({
+      table_name, constraint_name: `uq_${table_name}`, constraint_type: 'UNIQUE', column_name,
+      ordinal_position: index + 1,
     })));
   }
   return rows;

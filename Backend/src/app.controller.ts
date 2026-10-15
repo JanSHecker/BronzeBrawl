@@ -30,6 +30,19 @@ export class AppController {
     @Optional() private readonly gameflow?: GameflowService,
   ) {}
 
+  private gameflowUnavailable(): never {
+    throw new HttpException('gameflow security service unavailable', HttpStatus.SERVICE_UNAVAILABLE);
+  }
+
+  private integerQuery(value: unknown, field: string): number {
+    if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value)) {
+      throw new HttpException(`invalid ${field}`, HttpStatus.BAD_REQUEST);
+    }
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed)) throw new HttpException(`invalid ${field}`, HttpStatus.BAD_REQUEST);
+    return parsed;
+  }
+
   @Get('health')
   async getHealth(@Res({ passthrough: true }) response?: Response) {
     const readiness = await checkDatabaseReadiness(this.dataSource);
@@ -51,7 +64,7 @@ export class AppController {
 
   @Post('sendLoLInput')
   async receiveLoLInput(@Body() request: any, @Headers('x-game-token') token: string) {
-    if (!this.gameflow) return this.lolApiService.saveLolInput(request);
+    if (!this.gameflow) return this.gameflowUnavailable();
     return this.gameflow.ingest(request, token);
   }
 
@@ -62,39 +75,45 @@ export class AppController {
     @Query('rotationMode') rotationMode,
     @Query('defaultCounter') defaultCounter,
   ) {
-    if (this.gameflow) return this.gameflow.runGame({ punishmentAmount, rewardAmount, rotationMode, defaultCounter });
-    const game = await this.gameService.createGame({ punishmentAmount, rewardAmount, rotationMode, defaultRotationCounter: defaultCounter });
-    return game;
+    if (this.gameflow) {
+      return this.gameflow.runGame({
+        punishmentAmount: this.integerQuery(punishmentAmount, 'punishmentAmount'),
+        rewardAmount: this.integerQuery(rewardAmount, 'rewardAmount'),
+        rotationMode,
+        defaultCounter: this.integerQuery(defaultCounter, 'defaultCounter'),
+      });
+    }
+    return this.gameflowUnavailable();
   }
 
   @Post('createPlayer')
   async createPlayer(@Body() playerData) {
     if (this.gameflow) return this.gameflow.createPlayer(playerData);
-    return this.playerService.createPlayer(playerData);
+    return this.gameflowUnavailable();
   }
 
   @Get('getTeams')
   async getTeams(@Query('id') gameId) {
-    if (this.gameflow) return this.gameflow.getTeams(gameId);
-    return { players: await this.playerService.getAllPlayers(gameId), teams: await this.teamService.getTeams(gameId) };
+    if (this.gameflow) return this.gameflow.getTeams(this.integerQuery(gameId, 'gameId'));
+    return this.gameflowUnavailable();
   }
 
   @Post('joinTeam')
   async joinTeam(@Body() input, @Headers('x-player-token') token: string) {
     if (this.gameflow) return this.gameflow.joinTeam(input, token);
-    return this.playerService.joinTeam(input.player, input.team);
+    return this.gameflowUnavailable();
   }
 
   @Get('getAllChampions')
   async getAllChampions(@Query('id') gameId) {
-    if (this.gameflow) return this.gameflow.getAllChampions(gameId);
-    return this.championService.getAllChampions(gameId);
+    if (this.gameflow) return this.gameflow.getAllChampions(this.integerQuery(gameId, 'gameId'));
+    return this.gameflowUnavailable();
   }
 
   @Post('chooseChampion')
   async chooseChampion(@Body() input, @Headers('x-player-token') token: string) {
     if (this.gameflow) return this.gameflow.chooseChampion(input, token);
-    return this.playerService.chooseChampion(input);
+    return this.gameflowUnavailable();
   }
 
   @Post('Dummygame')
@@ -109,48 +128,43 @@ export class AppController {
 
   @Get('kda')
   async getKDA(@Query('id') championId) {
-    if (this.gameflow) return this.gameflow.kda(championId);
-    return this.championService.getKDA(championId);
+    if (this.gameflow) return this.gameflow.kda(this.integerQuery(championId, 'championId'));
+    return this.gameflowUnavailable();
   }
 
   @Post('confirmPunishment')
   async confirmPunishment(@Body() input, @Headers('x-player-token') token: string) {
     if (this.gameflow) return this.gameflow.confirmPunishment(input, token);
-    return this.punishmentService.confirmPunishment(input.id);
+    return this.gameflowUnavailable();
   }
 
   @Post('confirmReward')
   async confirmReward(@Body() input, @Headers('x-player-token') token: string) {
     if (this.gameflow) return this.gameflow.confirmReward(input, token);
-    await this.distributionService.distributePunishment(input);
-    return this.rewardService.confirmReward(input.id);
+    return this.gameflowUnavailable();
   }
 
   @Get('getChangeCounters')
   async getChangeCounter(@Query('id') playerId, @Headers('x-player-token') token: string) {
-    if (this.gameflow) return this.gameflow.getChangeCounters(playerId, token);
-    return this.playerService.getChangeCounters(playerId);
+    if (this.gameflow) return this.gameflow.getChangeCounters(this.integerQuery(playerId, 'playerId'), token);
+    return this.gameflowUnavailable();
   }
 
   @Get('Status')
   async getStatus(@Query('playerId') playerId, @Headers('x-player-token') token: string) {
-    if (this.gameflow) return this.gameflow.status(playerId, token);
-    return {
-      punishments: await this.punishmentService.getPunishments(playerId),
-      rewards: await this.rewardService.getRewards(playerId),
-      counter: await this.playerService.getChangeCounters(playerId),
-    };
+    if (this.gameflow) return this.gameflow.status(this.integerQuery(playerId, 'playerId'), token);
+    return this.gameflowUnavailable();
   }
 
   @Get('getSettings')
   async getSettings(@Query('gameId') gameId) {
-    if (this.gameflow) return this.gameflow.getSettings(gameId);
-    return this.gameService.getGame(gameId);
+    if (this.gameflow) return this.gameflow.getSettings(this.integerQuery(gameId, 'gameId'));
+    return this.gameflowUnavailable();
   }
 
   @Post('deletePlayer')
   async deletePlayer(@Body() input, @Headers('x-player-token') token: string) {
     if (this.gameflow) return this.gameflow.deletePlayer(input, token);
-    return this.playerService.deletePlayer(input.id);
+    return this.gameflowUnavailable();
   }
 }

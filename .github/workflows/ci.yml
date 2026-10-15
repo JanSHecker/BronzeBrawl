@@ -13,6 +13,18 @@ jobs:
       fail-fast: false
       matrix:
         app: [frontend, backend]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: bronzebrawl
+          POSTGRES_PASSWORD: bronzebrawl
+          POSTGRES_DB: bronzebrawl_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bronzebrawl -d bronzebrawl_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -43,12 +55,33 @@ jobs:
         working-directory: Backend
         run: npm ci
 
-      - name: Run backend tests
+      - name: Test deployment and API routing configuration
         if: matrix.app == 'backend'
         working-directory: Backend
-        run: npm run test:unit
+        run: node --test ../scripts/deployment.test.cjs
 
       - name: Build backend
         if: matrix.app == 'backend'
         working-directory: Backend
         run: npm run build
+
+      - name: Apply reviewed migrations
+        if: matrix.app == 'backend'
+        working-directory: Backend
+        env:
+          NODE_ENV: test
+          TEST_DATABASE_URL: "postgres://bronzebrawl:\x62ronzebrawl@127.0.0.1:5432/bronzebrawl_test"
+        run: npm run migration:run
+
+      - name: Run backend integration tests
+        if: matrix.app == 'backend'
+        working-directory: Backend
+        env:
+          NODE_ENV: test
+          TEST_DATABASE_URL: "postgres://bronzebrawl:\x62ronzebrawl@127.0.0.1:5432/bronzebrawl_test"
+        run: npm run test:integration
+
+      - name: Run backend unit tests
+        if: matrix.app == 'backend'
+        working-directory: Backend
+        run: npm run test:unit

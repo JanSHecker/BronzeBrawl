@@ -23,9 +23,11 @@ import { Reward } from './entities/reward.entity';
 import { RewardService } from './reward.service';
 import { DistributionService } from './distribution.service';
 import { GameflowService } from './gameflow.service';
+import { ReplayModule } from './replays/replay.module';
 
 @Module({
   imports: [
+    ReplayModule,
     DatabaseModule,
     ConfigModule.forRoot({ isGlobal: true }),
     TypeOrmModule.forFeature([

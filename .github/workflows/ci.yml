@@ -96,6 +96,10 @@ jobs:
         working-directory: Frontend
         run: npm ci
 
+      - name: Test replay companion
+        if: matrix.app == 'backend'
+        run: python3 -m unittest discover -s Companion/tests -v
+
       - name: Install Chromium
         if: matrix.app == 'backend'
         working-directory: Frontend

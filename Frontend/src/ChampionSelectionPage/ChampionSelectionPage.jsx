@@ -1,9 +1,8 @@
 import ChampionCard from "./ChampionCard";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import api from "../api";
+import api, { getGameId, getPlayerId } from "../api";
 import { usePolling } from "../useRequest";
-import { GAME_ID_KEY } from "../constants";
 import title from "../PickYourChampion.png";
 
 const ChampionSelectionPage = () => {
@@ -11,13 +10,13 @@ const ChampionSelectionPage = () => {
   const [ended, setEnded] = useState(false);
   const navigate = useNavigate();
   const { error, retry } = usePolling(async signal => {
-    const { data: status } = await api.get("Status", { params: { playerId: Number(localStorage.getItem("playerId")) }, signal });
+    const { data: status } = await api.get("Status", { params: { playerId: Number(getPlayerId()) }, signal });
     if (signal.aborted) return;
     if (!status.team) { navigate("/team", { replace: true }); return; }
     setEnded(status.gameState === "ended");
     const counter = status.counter[status.rotationMode === "Kills" ? 0 : 1];
     if (status.champion && (counter > 0 || status.gameState === "ended")) { navigate("/status", { replace: true }); return; }
-    const { data } = await api.get("getAllChampions", { params: { id: localStorage.getItem(GAME_ID_KEY) }, signal });
+    const { data } = await api.get("getAllChampions", { params: { id: getGameId() }, signal });
     if (signal.aborted) return;
     const own = status.team.teamName === 0 ? data.blue : data.red;
     if (!Array.isArray(own)) throw new Error("Invalid champion roster");

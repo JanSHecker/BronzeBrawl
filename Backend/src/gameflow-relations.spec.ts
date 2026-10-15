@@ -17,6 +17,7 @@ class RepositoryShapedDataSource {
   readonly players: any[];
   readonly champions: any[];
   readonly championRelations: string[][] = [];
+  readonly playerRelations: string[][] = [];
 
   constructor() {
     this.game = {
@@ -57,7 +58,21 @@ class RepositoryShapedDataSource {
   private async find(type: any, options: any): Promise<any[]> {
     if (type === Game) return [this.game];
     if (type === Team) return this.teams;
-    if (type === Player) return this.players;
+    if (type === Player) {
+      const relations = options.relations || [];
+      this.playerRelations.push(relations);
+      const loadsNestedTeamGame = relations.includes('team.game');
+      const loadsNestedChampionTeamGame = relations.includes('champion.team.game');
+      return this.players.map((row) => ({
+        ...row,
+        team: row.team && (loadsNestedTeamGame
+          ? this.teams.find((team) => team.teamId === row.team.teamId)
+          : { teamId: row.team.teamId, teamName: row.team.teamName }),
+        champion: row.champion && (loadsNestedChampionTeamGame
+          ? { ...row.champion, team: this.teams.find((team) => team.teamId === row.champion.teamId) }
+          : { championId: row.champion.championId }),
+      }));
+    }
     if (type !== Champion) return [];
 
     const relations = options.relations || [];
@@ -94,5 +109,14 @@ describe('GameflowService production relation loading', () => {
 
     const selected = await service.chooseChampion({ player: 501, champion: 601 }, 'a'.repeat(64));
     expect(selected).toMatchObject({ championId: 601, team: { gameId: 42, teamId: 101 } });
+
+    const status = await service.status(501, 'a'.repeat(64));
+    expect(status.team).toMatchObject({ gameId: 42, teamId: 101 });
+    expect(status.champion).toMatchObject({ championId: 601, team: { gameId: 42, teamId: 101 } });
+    expect(status.enemyTeam).toHaveLength(1);
+    expect(status.enemyTeam[0]).toMatchObject({ championId: 602, team: { gameId: 42, teamId: 102 } });
+    expect(database.playerRelations).toContainEqual([
+      'game', 'team', 'team.game', 'champion', 'champion.team', 'champion.team.game', 'champion.player',
+    ]);
   });
 });

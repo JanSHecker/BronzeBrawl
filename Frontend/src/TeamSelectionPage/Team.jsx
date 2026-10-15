@@ -1,6 +1,6 @@
 import { Button } from "react-daisyui";
 import TeamTable from "./TeamTable";
-import api from "../api";
+import api, { getPlayerId } from "../api";
 import { useAction } from "../useRequest";
 import { TEAMBLUE, TEAMRED } from "../constants";
 
@@ -12,7 +12,7 @@ const Team = ({ teamInfo, players, member, editModeOn, onSuccess }) => {
     <h1>{blue ? TEAMBLUE : TEAMRED}</h1>
     <TeamTable players={players} editModeOn={editModeOn} onSuccess={onSuccess} />
     <Button className="m-2" color="neutral" disabled={loading || players.length >= 5 || member?.team?.teamId === teamInfo.teamId} onClick={() => run(async () => {
-      await api.post("joinTeam", { player: Number(localStorage.getItem("playerId")), team: teamInfo.teamId });
+      await api.post("joinTeam", { player: Number(getPlayerId()), team: teamInfo.teamId });
       onSuccess();
     })}>Join</Button>
     {error && <p role="alert">{error}</p>}

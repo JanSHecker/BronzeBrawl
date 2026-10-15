@@ -29,23 +29,39 @@ export function usePolling(work, delay = 1000) {
   latest.current = work;
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
+  const context = useRef(null);
   const retry = useCallback(() => setRevision(value => value + 1), []);
+  const refresh = useCallback(async () => {
+    const current = context.current;
+    if (!current) return;
+    if (current.pending) await current.pending;
+    if (current.active) await current.poll();
+  }, []);
   useEffect(() => {
     let disposed = false;
     let timer;
     const controller = new AbortController();
-    const poll = async () => {
-      try {
-        await latest.current(controller.signal);
-        if (!disposed) setError("");
-      } catch (failure) {
-        if (!disposed) setError(errorMessage(failure));
-      } finally {
-        if (!disposed) timer = setTimeout(poll, delay);
-      }
+    const current = { active: true, pending: null, poll: null };
+    const poll = () => {
+      if (current.pending) return current.pending;
+      clearTimeout(timer);
+      current.pending = (async () => {
+        try {
+          await latest.current(controller.signal);
+          if (!disposed) setError("");
+        } catch (failure) {
+          if (!disposed) setError(errorMessage(failure));
+        } finally {
+          current.pending = null;
+          if (!disposed) timer = setTimeout(poll, delay);
+        }
+      })();
+      return current.pending;
     };
+    current.poll = poll;
+    context.current = current;
     poll();
-    return () => { disposed = true; controller.abort(); clearTimeout(timer); };
+    return () => { disposed = true; current.active = false; controller.abort(); clearTimeout(timer); if (context.current === current) context.current = null; };
   }, [delay, revision]);
-  return { error, retry };
+  return { error, retry, refresh };
 }

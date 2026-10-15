@@ -7,6 +7,9 @@
 /Backend/.nyc_output/
 /Backend/logs
 /Backend/*.log
+/Backend/replay-storage/
+/Companion/__pycache__/
+/Companion/tests/__pycache__/
 
 # === Frontend ===
 /Frontend/node_modules/
@@ -23,6 +26,7 @@
 /Frontend/*.log
 /Frontend/test-results/
 /Frontend/playwright-report/
+/Frontend/replay-storage/
 
 # === Shared (both folders or root) ===
 .env

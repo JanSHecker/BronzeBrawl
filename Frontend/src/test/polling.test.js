@@ -24,3 +24,21 @@ test("polling releases failures, never overlaps, and aborts on unmount", async (
   expect(work).toHaveBeenCalledTimes(2);
   expect(vi.getTimerCount()).toBe(0);
 });
+
+test("post-mutation refresh waits for an older poll and then fetches canonical state", async () => {
+  vi.useFakeTimers();
+  let finish;
+  const work = vi.fn().mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })).mockResolvedValue(undefined);
+  const { result, unmount } = renderHook(() => usePolling(work));
+  expect(work).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    const refreshing = result.current.refresh();
+    expect(work).toHaveBeenCalledTimes(1);
+    finish();
+    await refreshing;
+  });
+  expect(work).toHaveBeenCalledTimes(2);
+  expect(vi.getTimerCount()).toBe(1);
+  unmount();
+  expect(vi.getTimerCount()).toBe(0);
+});

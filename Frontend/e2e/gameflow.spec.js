@@ -8,6 +8,22 @@ const roster = [
 ];
 const kill = (id, killer = "AuditAlice#TEST") => ({ EventID: id, EventName: "ChampionKill", EventTime: id, KillerName: killer, VictimName: "AuditBob#TEST", Assisters: ["AuditAssist#TEST"] });
 
+test("replay entry serves the companion but keeps protected data and feed inactive", async ({ page }) => {
+  const feedRequests = [];
+  page.on("request", request => { if (request.url().endsWith("/sendLoLInput")) feedRequests.push(request.url()); });
+  await page.goto("/replays");
+  await expect(page.getByRole("heading", { name: "Replay-Verwaltung", exact: true })).toBeVisible();
+  await expect(page.getByLabel("Replay-Token")).toHaveAttribute("type", "password");
+  await expect(page.getByRole("article")).toHaveCount(0);
+  const response = await page.request.get("/downloads/bronze-brawl-companion.zip");
+  expect(response.status()).toBe(200);
+  expect((await response.body()).subarray(0, 2).toString()).toBe("PK");
+  const unauthorized = await page.request.get("/api/replays");
+  expect(unauthorized.status()).toBe(401);
+  expect(unauthorized.headers()["cache-control"]).toBe("no-store");
+  expect(feedRequests).toEqual([]);
+});
+
 test("two isolated players complete the secured gameflow and recover after failure/reload", async ({ browser, page }) => {
   const errors = [];
   const watch = async tab => {
@@ -25,8 +41,8 @@ test("two isolated players complete the secured gameflow and recover after failu
   await expect(invite).toBeVisible();
   const url = await invite.getAttribute("href");
   const host = await page.evaluate(() => {
-    const gameId = Number(localStorage.getItem("hostGameId"));
-    return { gameId, token: localStorage.getItem(`hostToken:${gameId}`) };
+    const { gameId } = JSON.parse(sessionStorage.getItem("bb:active"));
+    return { gameId, token: sessionStorage.getItem(`bb:host:${gameId}`) };
   });
   const events = [{ EventID: 0, EventName: "GameStart", EventTime: 0 }];
   const upload = async () => {
@@ -37,8 +53,7 @@ test("two isolated players complete the secured gameflow and recover after failu
     expect(response.ok(), await response.text()).toBe(true);
   };
   await upload();
-  const monitor = await page.context().newPage();
-  await watch(monitor);
+  const monitor = page;
   await monitor.route("http://localhost:3002/lol-data", route => route.fulfill({
     status: 200, contentType: "application/json",
     body: JSON.stringify({ allPlayers: roster, events: { Events: events }, gameData: { gameTime: 20, mapNumber: 11 } }),
@@ -49,7 +64,7 @@ test("two isolated players complete the secured gameflow and recover after failu
   expect(response.ok()).toBe(true);
   expect(response.request().postDataJSON().gameId).toBe(host.gameId);
   expect(response.request().headers()["x-game-token"]).toBe(host.token);
-  await monitor.close();
+  await monitor.goto("/");
   const blueContext = await browser.newContext();
   const redContext = await browser.newContext();
   try {

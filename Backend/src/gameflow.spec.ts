@@ -98,6 +98,14 @@ describe('gameflow contract',()=>{
     expect(await service.kda(champions[1].championId)).toEqual([0,0,2]);
     expect(db.all(Event)).toHaveLength(2);
   });
+  test('replayed snapshots with harmless identity whitespace reuse existing champions',async()=>{
+    const g=await service.runGame(settings);
+    const initial:any=feed(); initial.allPlayers[0].riotId=' Alice#EUW ';
+    const replay:any=structuredClone(initial); replay.allPlayers[0].riotId='Alice#EUW';
+    await service.ingest({gameId:g.gameId,input:initial},g.hostToken);
+    await service.ingest({gameId:g.gameId,input:replay},g.hostToken);
+    expect(db.all(Champion)).toHaveLength(4);
+  });
   test('initial snapshot processes historical kills even before owners join',async()=>{
     const g=await service.runGame(settings);
     await service.ingest({gameId:g.gameId,input:feed([kill()])},g.hostToken);
@@ -145,6 +153,39 @@ describe('gameflow contract',()=>{
     await service.chooseChampion({player:a.playerId,champion:champions[1].championId,killCounter:999},a.playerToken);
     const s=await service.status(a.playerId,a.playerToken); expect(s.counter).toEqual([2,2]); expect(s.champion.championId).toBe(champions[1].championId);
   });
+  test('uses the configured death counter for Deaths rotation and ignores a forged amount',async()=>{
+    const deathSettings={...settings,rotationMode:'Deaths',defaultCounter:3};
+    const g=await service.runGame(deathSettings);
+    await service.ingest({gameId:g.gameId,input:feed([],10)},g.hostToken);
+    const first=await service.createPlayer({playerName:'First',game:g.gameId});
+    const second=await service.createPlayer({playerName:'Second',game:g.gameId});
+    const gameTeams=(await service.getTeams(g.gameId)).teams;
+    const gameChampions=await service.getAllChampions(g.gameId);
+    await service.joinTeam({player:first.playerId,team:gameTeams[0].teamId},first.playerToken);
+    await service.joinTeam({player:second.playerId,team:gameTeams[1].teamId},second.playerToken);
+    await service.chooseChampion({player:first.playerId,champion:gameChampions.blue[0].championId},first.playerToken);
+    await service.chooseChampion({player:second.playerId,champion:gameChampions.red[0].championId},second.playerToken);
+    await service.ingest({gameId:g.gameId,input:feed([
+      kill(1,'Bob#EUW','Alice#EUW'), kill(2,'Bob#EUW','Alice#EUW'), kill(3,'Bob#EUW','Alice#EUW'),
+    ],13)},g.hostToken);
+    await service.chooseChampion({player:first.playerId,champion:gameChampions.blue[1].championId,counter:999},first.playerToken);
+    expect(await service.status(first.playerId,first.playerToken)).toMatchObject({counter:[3,3],champion:{championId:gameChampions.blue[1].championId}});
+  });
+  test('serializes concurrent rotation and cannot clear a newer champion owner',async()=>{
+    await setup();
+    await service.ingest({gameId:game.gameId,input:feed([kill(1),kill(2)])},game.hostToken);
+    const third=await service.createPlayer({playerName:'Third',game:game.gameId});
+    await service.joinTeam({player:third.playerId,team:teams[0].teamId},third.playerToken);
+    const attempts=await Promise.allSettled([
+      service.chooseChampion({player:a.playerId,champion:champions[1].championId},a.playerToken),
+      service.chooseChampion({player:third.playerId,champion:champions[1].championId},third.playerToken),
+    ]);
+    expect(attempts.filter(result=>result.status==='fulfilled')).toHaveLength(1);
+    expect(attempts.filter(result=>result.status==='rejected').map(result=>(result as any).reason.status)).toEqual([409]);
+    const selected=await service.getAllChampions(game.gameId);
+    const winnerId=(attempts.find(result=>result.status==='fulfilled') as any).value.player.playerId;
+    expect(selected.blue.find((champion:any)=>champion.championId===champions[1].championId).player).toMatchObject({playerId:winnerId});
+  });
   test('serializes concurrent feeds without lost counters or duplicate consequences',async()=>{
     await setup(); await Promise.all([service.ingest({gameId:game.gameId,input:feed([kill(1)])},game.hostToken),service.ingest({gameId:game.gameId,input:feed([kill(1),kill(2)])},game.hostToken)]);
     expect(db.all(Reward)).toHaveLength(2); expect((await service.status(a.playerId,a.playerToken)).counter).toEqual([0,2]);
@@ -182,10 +223,23 @@ describe('gameflow contract',()=>{
     await service.deletePlayer({id:a.playerId},a.playerToken);
     await expect(service.status(a.playerId,a.playerToken)).rejects.toMatchObject({status:404});
   });
-  test('GameEnd persists ended state and disallows new gameplay mutations',async()=>{
-    await setup(); await service.ingest({gameId:game.gameId,input:feed([{EventID:1,EventName:'GameEnd',EventTime:10,Result:'Win'}])},game.hostToken);
+  test('rejects malformed snapshots before creating roster state',async()=>{
+    const g=await service.runGame(settings);
+    const malformed=feed(); malformed.allPlayers.push({...malformed.allPlayers[0],championName:'Zed'});
+    await expect(service.ingest({gameId:g.gameId,input:malformed},g.hostToken)).rejects.toMatchObject({status:400});
+    const badEvent=feed([{EventID:1,EventName:'ChampionKill',KillerName:'Alice',VictimName:'Bob',Assisters:[null]}]);
+    await expect(service.ingest({gameId:g.gameId,input:badEvent},g.hostToken)).rejects.toMatchObject({status:400});
+    expect(db.all(Champion)).toHaveLength(0);
+  });
+  test('persists event consequence links and allows an exact ended-feed replay only',async()=>{
+    await setup();
+    const ended=feed([{EventID:1,EventName:'GameEnd',EventTime:10,Result:'Win'}],10);
+    await service.ingest({gameId:game.gameId,input:ended},game.hostToken);
+    await service.ingest({gameId:game.gameId,input:ended},game.hostToken);
     expect((await service.status(a.playerId,a.playerToken)).gameState).toBe('ended');
+    expect(db.all(Event)[0].takedown).toBeUndefined();
     await expect(service.createPlayer({playerName:'Late',game:game.gameId})).rejects.toMatchObject({status:409});
+    await expect(service.ingest({gameId:game.gameId,input:feed([{EventID:2,EventName:'GameEnd',EventTime:11}],11)},game.hostToken)).rejects.toMatchObject({status:409});
     await expect(service.joinTeam({player:a.playerId,team:teams[0].teamId},a.playerToken)).rejects.toMatchObject({status:409});
     await expect(service.chooseChampion({player:a.playerId,champion:champions[1].championId},a.playerToken)).rejects.toMatchObject({status:409});
   });
@@ -243,5 +297,12 @@ describe('gameflow contract',()=>{
     await service.ingest({gameId:game.gameId,input:feed([kill(1,'Minion_T100_L0')])},game.hostToken);
     expect(db.all(Reward)).toHaveLength(0);
     await service.deletePlayer({id:lobby.playerId},lobby.playerToken);
+  });
+  test('stores durable takedown, reward and punishment relations for a champion kill',async()=>{
+    await setup(); await service.ingest({gameId:game.gameId,input:feed([kill()])},game.hostToken);
+    const event=db.all(Event)[0]; const takedown=db.all(Takedown)[0];
+    expect(event.takedown).toBe(takedown);
+    expect(takedown.reward).toBe(db.all(Reward)[0]);
+    expect(takedown.punishment).toBe(db.all(Punishment)[0]);
   });
 });

@@ -88,6 +88,14 @@ export class GameflowService {
       || this.database?.driver?.options?.type === 'postgres';
   }
 
+  private async lockGame(store: Store, gameId: number): Promise<void> {
+    if (this.isPostgres() && store?.query) {
+      // Keep the lock in the transaction, rather than using an application
+      // mutex. This serializes game mutations across all API processes.
+      await store.query('SELECT pg_advisory_xact_lock($1)', [gameId]);
+    }
+  }
+
   private async transaction<T>(work: (store: Store) => Promise<T>, gameId?: number): Promise<T> {
     // The behavioral contract uses a tiny in-memory repository. It cannot use
     // TypeORM's transaction API, so provide the same serialization and rollback
@@ -111,9 +119,7 @@ export class GameflowService {
     }
     const transactionalWork = async (store: Store): Promise<T> => {
       if (gameId !== undefined && this.isPostgres() && store?.query) {
-        // Advisory xact locks are held by PostgreSQL until this transaction
-        // commits, including across multiple application processes.
-        await store.query('SELECT pg_advisory_xact_lock($1)', [gameId]);
+        await this.lockGame(store, gameId);
       }
       return work(store);
     };
@@ -223,7 +229,9 @@ export class GameflowService {
   private async getPlayerOrFail(value: any, store: Store = this.database): Promise<any> {
     const id = typeof value === 'object' ? this.playerId(value) : this.id(value, 'playerId');
     if (!id) this.fail('invalid playerId');
-    const player = await this.findOne(Player, (row) => row.playerId === id, store, ['game', 'team', 'champion']);
+    const player = await this.findOne(Player, (row) => row.playerId === id, store, [
+      'game', 'team', 'team.game', 'champion', 'champion.team', 'champion.team.game', 'champion.player',
+    ]);
     if (!player) this.fail('player not found', HttpStatus.NOT_FOUND);
     return player;
   }
@@ -269,7 +277,9 @@ export class GameflowService {
   }
 
   private normalizeRoster(input: any): any[] {
-    if (!input || !Array.isArray(input.allPlayers) || !input.events || !Array.isArray(input.events.Events)) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)
+      || !Array.isArray(input.allPlayers) || !input.events || typeof input.events !== 'object'
+      || Array.isArray(input.events) || !Array.isArray(input.events.Events)) {
       this.fail('invalid game input');
     }
     if (input.allPlayers.length === 0 || input.allPlayers.length > 10) this.fail('invalid game input');
@@ -289,9 +299,44 @@ export class GameflowService {
     });
   }
 
+  private normalizeEvents(input: any): any[] {
+    const events = input.events.Events.map((raw: any) => {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)
+        || typeof raw.EventID !== 'number' || !Number.isSafeInteger(raw.EventID) || raw.EventID < 0
+        || typeof raw.EventName !== 'string' || !raw.EventName.trim()) this.fail('invalid event');
+      if (raw.EventTime !== undefined && (typeof raw.EventTime !== 'number'
+        || !Number.isFinite(raw.EventTime) || raw.EventTime < 0)) this.fail('invalid event time');
+      if (raw.Assisters !== undefined && (!Array.isArray(raw.Assisters)
+        || raw.Assisters.some((name: any) => typeof name !== 'string' || !name.trim()))) {
+        this.fail('invalid event assisters');
+      }
+      if (raw.EventName === 'ChampionKill'
+        && (typeof raw.KillerName !== 'string' || !raw.KillerName.trim()
+          || typeof raw.VictimName !== 'string' || !raw.VictimName.trim())) {
+        this.fail('invalid champion kill');
+      }
+      return raw;
+    });
+    const gameData = input.gameData;
+    if (gameData !== undefined && (gameData === null || typeof gameData !== 'object' || Array.isArray(gameData))) {
+      this.fail('invalid gameData');
+    }
+    if (gameData?.gameTime !== undefined) this.gameTime(gameData.gameTime);
+    if (gameData?.mapNumber !== undefined
+      && (typeof gameData.mapNumber !== 'number' || !Number.isSafeInteger(gameData.mapNumber) || gameData.mapNumber <= 0)) {
+      this.fail('invalid mapNumber');
+    }
+    return events.sort((a, b) => a.EventID - b.EventID);
+  }
+
   private identity(player: any): string {
     if (typeof player.riotId === 'string' && player.riotId.trim()) return player.riotId.trim().toLowerCase();
-    return `${player.riotIdGameName.trim()}${player.riotIdTagLine ? `#${player.riotIdTagLine.trim()}` : ''}`.toLowerCase();
+    if (typeof player.riotIdGameName === 'string' && player.riotIdGameName.trim()) {
+      const gameName = player.riotIdGameName.trim().toLowerCase();
+      const tagLine = typeof player.riotIdTagLine === 'string' ? player.riotIdTagLine.trim().toLowerCase() : '';
+      return `${gameName}${tagLine ? `#${tagLine}` : ''}`;
+    }
+    return typeof player.summonerName === 'string' ? player.summonerName.trim().toLowerCase() : '';
   }
 
   private eventIdentity(name: any): string {
@@ -305,19 +350,19 @@ export class GameflowService {
   }
 
   private environmentKiller(name: string): boolean {
-    return /^(turret|inhibitor|nexus|minion|monster|dragon|baron|rift herald|neutral)/i.test(name);
+    return /^(turret|inhibitor|nexus|minion|monster|dragon|baron|rift herald|neutral|sru_|voidgrub|grubs?)/i.test(name.trim());
+  }
+
+  private canonical(value: any): string {
+    if (Array.isArray(value)) return `[${value.map((item) => this.canonical(item)).join(',')}]`;
+    if (value && typeof value === 'object') {
+      return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${this.canonical(value[key])}`).join(',')}}`;
+    }
+    return JSON.stringify(value);
   }
 
   private sameEvent(a: any, b: any): boolean {
     return a.eventType === b.EventName && a.payload && this.canonical(a.payload) === this.canonical(b);
-  }
-
-  // PostgreSQL jsonb does not preserve property order. Replay identity must not
-  // depend on serialization order (including nested payload objects).
-  private canonical(value: any): string {
-    if (Array.isArray(value)) return `[${value.map(item => this.canonical(item)).join(',')}]`;
-    if (value && typeof value === 'object') return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${this.canonical(value[key])}`).join(',')}}`;
-    return JSON.stringify(value);
   }
 
   private async findChampionForName(name: string, champions: any[]): Promise<any | null> {
@@ -339,6 +384,7 @@ export class GameflowService {
   async ingest(request: { gameId: any; input: any }, hostToken: string): Promise<any> {
     const gameId = this.id(request?.gameId, 'gameId');
     const roster = this.normalizeRoster(request?.input);
+    const events = this.normalizeEvents(request?.input);
     return this.transaction(async (store) => {
       const game = await this.getGameOrFail(gameId, store);
       await this.authorizeHost(game, hostToken);
@@ -379,19 +425,9 @@ export class GameflowService {
       }
       const players = (await this.rows(Player, store, ['game', 'team', 'champion'])).filter((player) => this.gameId(player.game) === gameId);
       const existingEvents = (await this.rows(Event, store, ['game'])).filter((event) => this.gameId(event.game) === gameId);
-      for (const raw of input.events.Events) {
-        if (!raw || typeof raw.EventID !== 'number' || !Number.isSafeInteger(raw.EventID) || raw.EventID < 0
-          || typeof raw.EventName !== 'string' || !raw.EventName.trim()) this.fail('invalid event');
-        if (raw.EventTime !== undefined && (typeof raw.EventTime !== 'number' || !Number.isFinite(raw.EventTime) || raw.EventTime < 0)) {
-          this.fail('invalid event time');
-        }
-        if (raw.EventName === 'ChampionKill' && (typeof raw.KillerName !== 'string' || !raw.KillerName.trim()
-          || typeof raw.VictimName !== 'string' || !raw.VictimName.trim()
-          || (raw.Assisters !== undefined && (!Array.isArray(raw.Assisters) || raw.Assisters.some((name: any) => typeof name !== 'string' || !name.trim()))))) {
-          this.fail('invalid combat event');
-        }
+      if (game.state === 'ended' && (gameTime !== undefined && game.lastGameTime !== null && gameTime > game.lastGameTime)) {
+        this.fail('game has ended', HttpStatus.CONFLICT);
       }
-      const events = [...input.events.Events].sort((a, b) => a.EventID - b.EventID);
       for (const raw of events) {
         const prior = existingEvents.find((event) => event.ingameId === raw.EventID);
         if (prior) {
@@ -432,16 +468,26 @@ export class GameflowService {
         if (victimPlayer) {
           victimPlayer.deathCounter = Math.max(0, Number(victimPlayer.deathCounter || 0) - 1);
           await this.save(Player, victimPlayer, store);
-          const punishment = await this.save(Punishment, { amount: game.punishmentAmount, punishmentType: 1, player: victimPlayer, takedown }, store);
+          const punishment = await this.save(Punishment, {
+            amount: game.punishmentAmount, punishmentType: 1, player: victimPlayer, takedown,
+          }, store);
           takedown.punishment = punishment;
         }
         if (killerPlayer) {
           killerPlayer.killCounter = Math.max(0, Number(killerPlayer.killCounter || 0) - 1);
           await this.save(Player, killerPlayer, store);
-          const reward = await this.save(Reward, { amount: game.rewardAmount, rewardType: 1, distributed: false, player: killerPlayer, takedown }, store);
+          const reward = await this.save(Reward, {
+            amount: game.rewardAmount, rewardType: 1, distributed: false, player: killerPlayer, takedown,
+          }, store);
           takedown.reward = reward;
         }
+        // Persist both sides of the one-to-one links. This makes a restart or
+        // repository reload return the same event consequences, rather than
+        // relying on this request's in-memory object graph.
         await this.save(Takedown, takedown, store);
+        event.takedown = takedown;
+        if (takedown.reward) event.reward = takedown.reward;
+        await this.save(Event, event, store);
       }
       game.rosterFingerprint = fingerprint;
       if (gameTime !== undefined) game.lastGameTime = gameTime;
@@ -494,7 +540,7 @@ export class GameflowService {
     if (!gameId) this.fail('invalid gameId');
     return this.transaction(async (store) => {
       const player = await this.authorizePlayer(input?.player, token, store);
-      if (player.game.state === 'ended') this.fail('game has ended', HttpStatus.CONFLICT);
+      if (player.game?.state === 'ended') this.fail('game has ended', HttpStatus.CONFLICT);
       const teamId = this.id(input?.team, 'teamId');
       const team = await this.findOne(Team, (row) => row.teamId === teamId, store, ['game']);
       if (!team) this.fail('team not found', HttpStatus.NOT_FOUND);
@@ -530,24 +576,44 @@ export class GameflowService {
     if (!gameId) this.fail('invalid gameId');
     return this.transaction(async (store) => {
       const player = await this.authorizePlayer(input?.player, token, store);
-      if (player.game.state === 'ended') this.fail('game has ended', HttpStatus.CONFLICT);
+      // Reload the game inside the locked transaction. The client-provided
+      // counter/mode and a relation loaded before the lock are never trusted.
+      const game = await this.getGameOrFail(player.game, store);
+      if (game.gameId !== gameId) this.fail('player belongs to another game', HttpStatus.CONFLICT);
+      if (game.state === 'ended') this.fail('game has ended', HttpStatus.CONFLICT);
       if (!player.team) this.fail('join a team before choosing a champion', HttpStatus.CONFLICT);
       const championId = this.id(input?.champion, 'championId');
       const champion = await this.findOne(Champion, (row) => row.championId === championId, store, ['team', 'team.game', 'player']);
       if (!champion) this.fail('champion not found', HttpStatus.NOT_FOUND);
-      if (this.gameId(champion.team?.game) !== this.gameId(player.game)) this.fail('champion belongs to another game', HttpStatus.FORBIDDEN);
+      if (this.gameId(champion.team?.game) !== game.gameId) this.fail('champion belongs to another game', HttpStatus.FORBIDDEN);
       if (this.teamId(champion.team) !== this.teamId(player.team)) this.fail('champion is on the other team', HttpStatus.FORBIDDEN);
-      if (champion.player && this.playerId(champion.player) !== player.playerId) this.fail('champion is occupied', HttpStatus.CONFLICT);
       if (player.champion && this.championId(player.champion) === championId) this.fail('same champion selection resets no counters', HttpStatus.CONFLICT);
+
+      // Both the candidate and the player's current champion were loaded in
+      // this transaction after the game lock. Never clear an ownership link
+      // that belongs to a newer owner if a stale relation is encountered.
+      if (champion.player) this.fail('champion is occupied', HttpStatus.CONFLICT);
       if (player.champion) {
-        const available = player.game.rotationMode === 'Kills' ? Number(player.killCounter) <= 0 : Number(player.deathCounter) <= 0;
+        const currentChampion = await this.findOne(
+          Champion,
+          (row) => row.championId === this.championId(player.champion),
+          store,
+          ['team', 'team.game', 'player'],
+        );
+        if (!currentChampion) this.fail('current champion not found', HttpStatus.CONFLICT);
+        if (currentChampion.player && this.playerId(currentChampion.player) !== player.playerId) {
+          this.fail('current champion is occupied', HttpStatus.CONFLICT);
+        }
+        const available = game.rotationMode === 'Kills'
+          ? Number(player.killCounter) <= 0
+          : Number(player.deathCounter) <= 0;
         if (!available) this.fail('rotation counter is not exhausted', HttpStatus.CONFLICT);
-        player.champion.player = null;
-        await this.save(Champion, player.champion, store);
+        currentChampion.player = null;
+        await this.save(Champion, currentChampion, store);
       }
       champion.player = player;
       player.champion = champion;
-      const counter = Number(player.game.defaultRotationCounter);
+      const counter = Number(game.defaultRotationCounter);
       player.killCounter = counter;
       player.deathCounter = counter;
       await this.save(Champion, champion, store);
@@ -588,7 +654,7 @@ export class GameflowService {
       rewards: rewards.map((reward) => this.publicReward(reward)),
       counter: [Number(player.killCounter || 0), Number(player.deathCounter || 0)],
       kda: champion ? await this.kda(champion.championId) : [0, 0, 0],
-      enemyTeam: enemy ? (await this.rows(Champion, this.database, ['team', 'player'])).filter((row) => this.teamId(row.team) === enemy.teamId).map((row) => this.publicChampion(row)) : [],
+      enemyTeam: enemy ? (await this.rows(Champion, this.database, ['team', 'team.game', 'player'])).filter((row) => this.teamId(row.team) === enemy.teamId).map((row) => this.publicChampion(row)) : [],
       gameState: game.state || 'waiting_for_feed',
       feedStale: !feedAt || Date.now() - feedAt > 15000,
       champion: champion ? this.publicChampion(champion) : null,
@@ -605,31 +671,43 @@ export class GameflowService {
 
   async confirmReward(request: any, token: string): Promise<any> {
     const rewardId = this.id(request?.id, 'rewardId');
-    const reward = await this.findOne(Reward, (row) => row.rewardId === rewardId, this.database, ['player']);
-    if (!reward) this.fail('reward not found', HttpStatus.NOT_FOUND);
-    const owner = await this.getPlayerOrFail(this.playerId(reward.player));
-    const gameId = this.gameId(owner.game);
-    if (!gameId) this.fail('invalid gameId');
+    // The reward is deliberately discovered inside the transaction. A
+    // preflight read followed by a second transaction would permit a stale
+    // distributed flag or owner relation to be used by concurrent requests.
     return this.transaction(async (store) => {
-      const rewardId = this.id(request?.id, 'rewardId');
-      const reward = await this.findOne(Reward, (row) => row.rewardId === rewardId, store, ['player', 'takedown']);
+      let reward = await this.findOne(Reward, (row) => row.rewardId === rewardId, store, ['player']);
+      if (!reward) this.fail('reward not found', HttpStatus.NOT_FOUND);
+
+      const ownerPreview = await this.getPlayerOrFail(this.playerId(reward.player), store);
+      const gameId = this.gameId(ownerPreview.game);
+      if (!gameId) this.fail('invalid gameId');
+      await this.lockGame(store, gameId);
+
+      // READ COMMITTED PostgreSQL transactions see the winner's committed
+      // distributed flag after waiting on the advisory lock. Reload all
+      // relations before making the one-and-only consumption decision.
+      reward = await this.findOne(Reward, (row) => row.rewardId === rewardId, store, ['player', 'takedown']);
       if (!reward) this.fail('reward not found', HttpStatus.NOT_FOUND);
       // Never trust distributor/player IDs from the request. The reward owner
       // is the only principal allowed to consume it; the token proves that
       // principal's capability.
       const owner = await this.authorizePlayer(this.playerId(reward.player), token, store);
       if (reward.distributed) this.fail('reward already consumed', HttpStatus.CONFLICT);
+      const game = await this.getGameOrFail(owner.game, store);
       const recipientId = this.id(request?.punishment?.recipient?.playerId, 'recipient');
       const recipient = await this.getPlayerOrFail(recipientId, store);
-      if (this.gameId(recipient.game) !== this.gameId(owner.game)) this.fail('recipient belongs to another game', HttpStatus.FORBIDDEN);
+      if (this.gameId(recipient.game) !== game.gameId) this.fail('recipient belongs to another game', HttpStatus.FORBIDDEN);
       if (!owner.team || !recipient.team || this.teamId(owner.team) === this.teamId(recipient.team)) this.fail('recipient must be an opposing teammate');
       const punishment = await this.save(Punishment, {
+        // A distributed reward always creates the server-defined distributed
+        // punishment. Amount comes from the persisted reward (created from
+        // Game.rewardAmount); distributor comes from the authenticated owner.
         amount: reward.amount, punishmentType: 0, recieved: false, distributor: owner, player: recipient,
       }, store);
       reward.distributed = true;
       await this.save(Reward, reward, store);
       return this.publicPunishment(punishment);
-    }, gameId);
+    });
   }
 
   async confirmPunishment(request: any, token: string): Promise<any> {

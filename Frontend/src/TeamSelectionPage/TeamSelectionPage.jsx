@@ -2,27 +2,32 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "react-daisyui";
 import Team from "./Team";
-import api from "../api";
+import api, { getGameId, getPlayerId } from "../api";
 import { usePolling } from "../useRequest";
-import { GAME_ID_KEY } from "../constants";
 import title from "../PickYourTeam.png";
 
 const TeamSelectionPage = () => {
   const [roster, setRoster] = useState({ teams: [], players: { blue: [], red: [] } });
   const [editModeOn, setEditModeOn] = useState(false);
   const navigate = useNavigate();
-  const playerId = Number(localStorage.getItem("playerId"));
+  const memberOf = data => {
+    for (const [color, name] of [[0, "blue"], [1, "red"]]) {
+      const player = data.players[name].find(row => row.playerId === Number(getPlayerId()));
+      if (player) return { ...player, team: data.teams.find(team => team.teamName === color) };
+    }
+    return null;
+  };
   const { error, retry } = usePolling(async signal => {
-    const { data } = await api.get("getTeams", { params: { id: localStorage.getItem(GAME_ID_KEY) }, signal });
+    const { data } = await api.get("getTeams", { params: { id: getGameId() }, signal });
     if (signal.aborted) return;
     if (!Array.isArray(data?.teams) || !Array.isArray(data.players?.blue) || !Array.isArray(data.players?.red)) throw new Error("Invalid roster");
     setRoster(data);
-    const member = [...data.players.blue, ...data.players.red].find(player => player.playerId === playerId);
+    const member = memberOf(data);
     if (member?.team) localStorage.setItem("teamId", member.team.teamId);
     else localStorage.removeItem("teamId");
     if (member?.champion) navigate("/status", { replace: true });
   });
-  const member = [...roster.players.blue, ...roster.players.red].find(player => player.playerId === playerId);
+  const member = memberOf(roster);
   return <>
     <img src={title} alt="pick your team" />
     {error && <p role="alert">{error} <button onClick={retry}>Retry</button></p>}

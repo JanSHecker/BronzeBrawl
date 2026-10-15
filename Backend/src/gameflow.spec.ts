@@ -98,6 +98,14 @@ describe('gameflow contract',()=>{
     expect(await service.kda(champions[1].championId)).toEqual([0,0,2]);
     expect(db.all(Event)).toHaveLength(2);
   });
+  test('replayed snapshots with harmless identity whitespace reuse existing champions',async()=>{
+    const g=await service.runGame(settings);
+    const initial:any=feed(); initial.allPlayers[0].riotId=' Alice#EUW ';
+    const replay:any=structuredClone(initial); replay.allPlayers[0].riotId='Alice#EUW';
+    await service.ingest({gameId:g.gameId,input:initial},g.hostToken);
+    await service.ingest({gameId:g.gameId,input:replay},g.hostToken);
+    expect(db.all(Champion)).toHaveLength(4);
+  });
   test('initial snapshot processes historical kills even before owners join',async()=>{
     const g=await service.runGame(settings);
     await service.ingest({gameId:g.gameId,input:feed([kill()])},g.hostToken);

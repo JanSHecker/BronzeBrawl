@@ -223,7 +223,9 @@ export class GameflowService {
   private async getPlayerOrFail(value: any, store: Store = this.database): Promise<any> {
     const id = typeof value === 'object' ? this.playerId(value) : this.id(value, 'playerId');
     if (!id) this.fail('invalid playerId');
-    const player = await this.findOne(Player, (row) => row.playerId === id, store, ['game', 'team', 'champion']);
+    const player = await this.findOne(Player, (row) => row.playerId === id, store, [
+      'game', 'team', 'team.game', 'champion', 'champion.team', 'champion.team.game', 'champion.player',
+    ]);
     if (!player) this.fail('player not found', HttpStatus.NOT_FOUND);
     return player;
   }
@@ -325,7 +327,12 @@ export class GameflowService {
 
   private identity(player: any): string {
     if (typeof player.riotId === 'string' && player.riotId.trim()) return player.riotId.trim().toLowerCase();
-    return `${player.riotIdGameName}#${player.riotIdTagLine || ''}`.toLowerCase();
+    if (typeof player.riotIdGameName === 'string' && player.riotIdGameName.trim()) {
+      const gameName = player.riotIdGameName.trim().toLowerCase();
+      const tagLine = typeof player.riotIdTagLine === 'string' ? player.riotIdTagLine.trim().toLowerCase() : '';
+      return `${gameName}#${tagLine}`;
+    }
+    return typeof player.summonerName === 'string' ? player.summonerName.trim().toLowerCase() : '';
   }
 
   private eventIdentity(name: any): string {
@@ -386,7 +393,7 @@ export class GameflowService {
       const teamByName = new Map(teams.map((team) => [team.teamName, team]));
       if (!teamByName.has(0) || !teamByName.has(1)) this.fail('game teams are incomplete', HttpStatus.CONFLICT);
       let champions = (await this.rows(Champion, store, ['team', 'team.game', 'player'])).filter((champion) => this.gameId(champion.team?.game) === gameId);
-      const byIdentity = new Map(champions.map((champion) => [String(champion.riotId || champion.summonerName).toLowerCase(), champion]));
+      const byIdentity = new Map(champions.map((champion) => [this.identity(champion), champion]));
       for (const player of roster) {
         const key = this.identity(player);
         if (!byIdentity.has(key)) {
@@ -611,7 +618,7 @@ export class GameflowService {
       rewards: rewards.map((reward) => this.publicReward(reward)),
       counter: [Number(player.killCounter || 0), Number(player.deathCounter || 0)],
       kda: champion ? await this.kda(champion.championId) : [0, 0, 0],
-      enemyTeam: enemy ? (await this.rows(Champion, this.database, ['team', 'player'])).filter((row) => this.teamId(row.team) === enemy.teamId).map((row) => this.publicChampion(row)) : [],
+      enemyTeam: enemy ? (await this.rows(Champion, this.database, ['team', 'team.game', 'player'])).filter((row) => this.teamId(row.team) === enemy.teamId).map((row) => this.publicChampion(row)) : [],
       gameState: game.state || 'waiting_for_feed',
       feedStale: !feedAt || Date.now() - feedAt > 15000,
       champion: champion ? this.publicChampion(champion) : null,

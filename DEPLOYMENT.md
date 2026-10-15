@@ -57,6 +57,13 @@ Set real values for:
 - `POSTGRES_DB`
 - optionally `VITE_API_BASE_URL` (default `/api` is correct when using nginx reverse proxy)
 
+The deploy script stores database backups outside the checkout, in the SSH
+deploy user's state directory: `${XDG_STATE_HOME:-$HOME/.local/state}/bronzebrawl/backups`.
+The directory is created with restrictive permissions (`700`), so no
+root-owned `/var/backups` setup is required. Set `BACKUP_DIR` explicitly when
+using a separately provisioned backup volume; it must be writable by the SSH
+deploy user.
+
 ### 3. Install Docker if needed
 
 Your deploy script assumes Docker and the Compose plugin already exist.

@@ -13,7 +13,10 @@ fi
 BRANCH="${DEPLOY_BRANCH:-main}"
 DEPLOY_REVISION="${DEPLOY_REVISION:-}"
 COMPOSE=(docker compose --env-file .env.prod -f docker-compose.prod.yml)
-BACKUP_DIR="${BACKUP_DIR:-/var/backups/bronzebrawl}"
+if [[ -z "${BACKUP_DIR:-}" ]]; then
+  : "${HOME:?HOME must be set when BACKUP_DIR is not provided}"
+  BACKUP_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/bronzebrawl/backups"
+fi
 BACKUP_FILE="$BACKUP_DIR/bronzebrawl-$(date -u +%Y%m%dT%H%M%SZ).sql"
 PUBLIC_HEALTH_URL="${PUBLIC_HEALTH_URL:-http://127.0.0.1:8080/api/health}"
 
@@ -41,6 +44,7 @@ git switch --detach "$DEPLOY_REVISION"
 
 umask 077
 mkdir -p "$BACKUP_DIR"
+chmod 700 "$BACKUP_DIR"
 echo "[deploy] Starting PostgreSQL and waiting for it to become healthy"
 "${COMPOSE[@]}" up -d --wait postgres
 

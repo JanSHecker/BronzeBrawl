@@ -51,12 +51,22 @@ test('deploy never resets repository; backup precedes migration/start; public AP
   assert.match(deploy, /git status --porcelain/);
   assert.match(deploy, /DEPLOY_REVISION/);
   assert.match(deploy, /git switch --detach "\$DEPLOY_REVISION"/);
-  assert.match(deploy, /BACKUP_DIR:-\/var\/backups\/bronzebrawl/);
   assert.match(deploy, /pg_dump/);
   assert.ok(deploy.indexOf('up -d --wait postgres') < deploy.indexOf('pg_dump'));
   assert.ok(deploy.indexOf('pg_dump') < deploy.indexOf('up -d --wait --build'));
   assert.match(deploy, /PUBLIC_HEALTH_URL/);
   assert.match(deploy, /health\.cjs/);
+});
+
+test('database backups default to a private deploy-user directory outside the checkout', () => {
+  const deploy = read('scripts/deploy.sh');
+  const docs = read('DEPLOYMENT.md');
+  assert.match(deploy, /BACKUP_DIR="\$\{XDG_STATE_HOME:-\$HOME\/\.local\/state\}\/bronzebrawl\/backups"/);
+  assert.match(deploy, /mkdir -p "\$BACKUP_DIR"/);
+  assert.match(deploy, /chmod 700 "\$BACKUP_DIR"/);
+  assert.match(docs, /\$\{XDG_STATE_HOME:-\$HOME\/\.local\/state\}\/bronzebrawl\/backups/);
+  assert.match(docs, /outside the checkout/);
+  assert.doesNotMatch(deploy, /\/var\/backups\/bronzebrawl/);
 });
 
 test('nginx public api cannot fall through to SPA', () => {

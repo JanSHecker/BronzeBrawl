@@ -10,7 +10,30 @@ import { RewardService } from './reward.service';
 import { DistributionService } from './distribution.service';
 import { TeamService } from './team.service';
 import { getDataSourceToken } from '@nestjs/typeorm';
-import { REQUIRED_APPLICATION_TABLES } from './database/readiness';
+import { REQUIRED_APPLICATION_COLUMNS, REQUIRED_FOREIGN_KEYS } from './database/readiness';
+
+const readinessQuery = jest.fn().mockImplementation((sql: string) => {
+  if (sql.includes('typeorm_migrations')) return [{ '?column?': 1 }];
+  if (sql.includes('information_schema.columns')) {
+    return Object.entries(REQUIRED_APPLICATION_COLUMNS).flatMap(([table_name, columns]) =>
+      columns.map((column_name) => ({ table_name, column_name })));
+  }
+  const primaryKeys: Record<string, string[]> = {
+    game: ['gameId'], team: ['teamId'], champion: ['championId'], player: ['playerId'],
+    punishment: ['punishmentId'], reward: ['rewardId'], takedown: ['takedownId'], event: ['eventId'],
+    champion_assists_takedown: ['championChampionId', 'takedownTakedownId'],
+  };
+  const rows: any[] = Object.entries(primaryKeys).flatMap(([table_name, columns]) => columns.map((column_name, index) => ({
+    table_name, constraint_name: `pk_${table_name}`, constraint_type: 'PRIMARY KEY', column_name, ordinal_position: index + 1,
+  })));
+  for (const [table_name, columns, referenced_table_name, referencedColumns] of REQUIRED_FOREIGN_KEYS) {
+    rows.push(...columns.map((column_name, index) => ({
+      table_name, constraint_name: `fk_${table_name}_${column_name}`, constraint_type: 'FOREIGN KEY', column_name,
+      ordinal_position: index + 1, referenced_table_name, referenced_column_name: referencedColumns[index],
+    })));
+  }
+  return rows;
+});
 
 const createMock = () => ({
   getHello: jest.fn(),
@@ -55,7 +78,7 @@ describe('AppController', () => {
           provide: getDataSourceToken(),
           useValue: {
             isInitialized: true,
-            query: jest.fn().mockResolvedValue(REQUIRED_APPLICATION_TABLES.map((table_name) => ({ table_name }))),
+            query: readinessQuery,
           },
         },
       ],

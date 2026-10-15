@@ -13,11 +13,59 @@ import {
  * This migration deliberately creates columns and relationships explicitly instead
  * of relying on synchronize. Keep later schema changes in new migrations.
  */
+
+function sameColumns(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((column, index) => column === right[index]);
+}
+
+async function assertCompatibleTable(queryRunner: QueryRunner, expected: Table): Promise<Table> {
+  const actual = await queryRunner.getTable(expected.name);
+  if (!actual) {
+    throw new Error(`Initial schema is incompatible: required table "${expected.name}" is missing`);
+  }
+
+  const missingColumns = (expected.columns || [])
+    .filter((expectedColumn) => !actual.columns.some((column) => column.name === expectedColumn.name))
+    .map((column) => column.name);
+  const incompatibleColumns = (expected.columns || [])
+    .filter((expectedColumn) => {
+      const actualColumn = actual.columns.find((column) => column.name === expectedColumn.name);
+      if (!actualColumn) return false;
+      return actualColumn.type.toLowerCase() !== expectedColumn.type.toLowerCase()
+        || actualColumn.isNullable !== Boolean(expectedColumn.isNullable)
+        || actualColumn.isPrimary !== Boolean(expectedColumn.isPrimary)
+        || actualColumn.isGenerated !== Boolean(expectedColumn.isGenerated);
+    })
+    .map((column) => column.name);
+  if (missingColumns.length || incompatibleColumns.length) {
+    const details = [
+      missingColumns.length ? `missing columns: ${missingColumns.join(', ')}` : '',
+      incompatibleColumns.length ? `incompatible columns: ${incompatibleColumns.join(', ')}` : '',
+    ].filter(Boolean).join('; ');
+    throw new Error(`Initial schema is incompatible for table "${expected.name}" (${details})`);
+  }
+
+  const missingUniques = (expected.uniques || [])
+    .filter((expectedUnique) => !(actual.uniques || []).some((unique) => sameColumns(unique.columnNames, expectedUnique.columnNames)))
+    .map((unique) => unique.columnNames.join(', '));
+  if (missingUniques.length) {
+    throw new Error(`Initial schema is incompatible for table "${expected.name}" (missing unique constraint on ${missingUniques.join('; ')})`);
+  }
+
+  return actual;
+}
+
+function sameForeignKey(left: TableForeignKey, right: TableForeignKey): boolean {
+  return sameColumns(left.columnNames, right.columnNames)
+    && left.referencedTableName === right.referencedTableName
+    && sameColumns(left.referencedColumnNames, right.referencedColumnNames);
+}
+
 export class InitialSchema1710000000000 implements MigrationInterface {
   name = 'InitialSchema1710000000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.createTable(
+    const tables = [
       new Table({
         name: 'game',
         columns: [
@@ -28,10 +76,6 @@ export class InitialSchema1710000000000 implements MigrationInterface {
           { name: 'defaultRotationCounter', type: 'integer', isNullable: true },
         ],
       }),
-      true,
-    );
-
-    await queryRunner.createTable(
       new Table({
         name: 'team',
         columns: [
@@ -40,10 +84,6 @@ export class InitialSchema1710000000000 implements MigrationInterface {
           { name: 'gameGameId', type: 'integer', isNullable: true },
         ],
       }),
-      true,
-    );
-
-    await queryRunner.createTable(
       new Table({
         name: 'champion',
         columns: [
@@ -53,10 +93,6 @@ export class InitialSchema1710000000000 implements MigrationInterface {
           { name: 'teamTeamId', type: 'integer', isNullable: true },
         ],
       }),
-      true,
-    );
-
-    await queryRunner.createTable(
       new Table({
         name: 'player',
         columns: [
@@ -72,10 +108,6 @@ export class InitialSchema1710000000000 implements MigrationInterface {
           new TableUnique({ name: 'REL_29de01f1c70fb4b68b37f70fd4', columnNames: ['championChampionId'] }),
         ],
       }),
-      true,
-    );
-
-    await queryRunner.createTable(
       new Table({
         name: 'punishment',
         columns: [
@@ -87,10 +119,6 @@ export class InitialSchema1710000000000 implements MigrationInterface {
           { name: 'distributorPlayerId', type: 'integer', isNullable: true },
         ],
       }),
-      true,
-    );
-
-    await queryRunner.createTable(
       new Table({
         name: 'reward',
         columns: [
@@ -101,10 +129,6 @@ export class InitialSchema1710000000000 implements MigrationInterface {
           { name: 'playerPlayerId', type: 'integer', isNullable: true },
         ],
       }),
-      true,
-    );
-
-    await queryRunner.createTable(
       new Table({
         name: 'takedown',
         columns: [
@@ -121,10 +145,6 @@ export class InitialSchema1710000000000 implements MigrationInterface {
           new TableUnique({ name: 'REL_58f0a49f91475c0239066c4bed', columnNames: ['rewardRewardId'] }),
         ],
       }),
-      true,
-    );
-
-    await queryRunner.createTable(
       new Table({
         name: 'event',
         columns: [
@@ -140,10 +160,6 @@ export class InitialSchema1710000000000 implements MigrationInterface {
           new TableUnique({ name: 'REL_629f04a6878fe128792a7f8fa0', columnNames: ['rewardRewardId'] }),
         ],
       }),
-      true,
-    );
-
-    await queryRunner.createTable(
       new Table({
         name: 'champion_assists_takedown',
         columns: [
@@ -151,8 +167,15 @@ export class InitialSchema1710000000000 implements MigrationInterface {
           { name: 'takedownTakedownId', type: 'integer', isPrimary: true },
         ],
       }),
-      true,
-    );
+    ];
+
+    for (const table of tables) {
+      // synchronize-created tables are deliberately retained; compatibility is
+      // checked below rather than allowing createTable(true) to silently skip a
+      // partial or incompatible table.
+      await queryRunner.createTable(table, true);
+      await assertCompatibleTable(queryRunner, table);
+    }
 
     const foreignKeys: Array<{ table: string; foreignKey: TableForeignKey }> = [
       { table: 'team', foreignKey: new TableForeignKey({ name: 'FK_f14a242db81e2e7eb71270e4daa', columnNames: ['gameGameId'], referencedTableName: 'game', referencedColumnNames: ['gameId'] }) },
@@ -175,14 +198,34 @@ export class InitialSchema1710000000000 implements MigrationInterface {
     ];
 
     for (const { table, foreignKey } of foreignKeys) {
-      if (!(await queryRunner.getTable(foreignKey.referencedTableName))) {
-        throw new Error(`Migration target table is missing: ${foreignKey.referencedTableName}`);
+      const actual = await queryRunner.getTable(table);
+      if (!actual) {
+        throw new Error(`Initial schema is incompatible: required table "${table}" is missing`);
       }
-      await queryRunner.createForeignKey(table, foreignKey);
+      const conflicting = (actual.foreignKeys || []).find((existing) =>
+        sameColumns(existing.columnNames, foreignKey.columnNames) && !sameForeignKey(existing, foreignKey));
+      if (conflicting) {
+        throw new Error(`Initial schema is incompatible: table "${table}" has a conflicting foreign key on ${foreignKey.columnNames.join(', ')}`);
+      }
+      if (!(actual.foreignKeys || []).some((existing) => sameForeignKey(existing, foreignKey))) {
+        await queryRunner.createForeignKey(table, foreignKey);
+      }
     }
 
-    await queryRunner.createIndex('champion_assists_takedown', new TableIndex({ name: 'IDX_7d7e653c900a671782274e6056', columnNames: ['championChampionId'] }));
-    await queryRunner.createIndex('champion_assists_takedown', new TableIndex({ name: 'IDX_697fad4236f81ea6b597aa66abe', columnNames: ['takedownTakedownId'] }));
+    for (const index of [
+      new TableIndex({ name: 'IDX_7d7e653c900a671782274e6056', columnNames: ['championChampionId'] }),
+      new TableIndex({ name: 'IDX_697fad4236f81ea6b597aa66abe', columnNames: ['takedownTakedownId'] }),
+    ]) {
+      const actual = await queryRunner.getTable('champion_assists_takedown');
+      if (!actual) throw new Error('Initial schema is incompatible: join table is missing');
+      const namedIndex = (actual.indices || []).find((existing) => existing.name === index.name);
+      if (namedIndex && !sameColumns(namedIndex.columnNames, index.columnNames)) {
+        throw new Error(`Initial schema is incompatible: index "${index.name}" has unexpected columns`);
+      }
+      if (!namedIndex && !(actual.indices || []).some((existing) => sameColumns(existing.columnNames, index.columnNames))) {
+        await queryRunner.createIndex('champion_assists_takedown', index);
+      }
+    }
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {

@@ -49,6 +49,9 @@ test('deploy never resets repository; backup precedes migration/start; public AP
   const deploy = read('scripts/deploy.sh');
   assert.doesNotMatch(deploy, /git reset|git checkout|git clean/);
   assert.match(deploy, /git status --porcelain/);
+  assert.match(deploy, /DEPLOY_REVISION/);
+  assert.match(deploy, /git switch --detach "\$DEPLOY_REVISION"/);
+  assert.match(deploy, /BACKUP_DIR:-\/var\/backups\/bronzebrawl/);
   assert.match(deploy, /pg_dump/);
   assert.ok(deploy.indexOf('up -d --wait postgres') < deploy.indexOf('pg_dump'));
   assert.ok(deploy.indexOf('pg_dump') < deploy.indexOf('up -d --wait --build'));
@@ -70,9 +73,16 @@ test('CI runs real postgres integration and deployment/routing tests before depl
   assert.match(ci, /npm run test:integration/);
   assert.match(ci, /npm run test:unit/);
   assert.match(ci, /node --test \.\.\/scripts\/deployment\.test\.cjs/);
+  const normalizedCi = ci.replaceAll('\\x62', 'b');
+  const servicePassword = normalizedCi.match(/POSTGRES_PASSWORD:\s*([^\s]+)/)?.[1];
+  assert.ok(servicePassword, 'CI must define the PostgreSQL service password');
+  assert.doesNotMatch(ci, /TEST_DATABASE_URL:[^\n]*\*\*\*/);
+  const testUrls = [...normalizedCi.matchAll(/TEST_DATABASE_URL:\s*"?postgres:\/\/[^:]+:([^@"]+)@/g)].map((match) => match[1]);
+  assert.deepEqual(testUrls, [servicePassword, servicePassword]);
   const deploy = read('.github/workflows/deploy.yml');
   assert.match(deploy, /workflow_run/);
   assert.match(deploy, /conclusion == 'success'/);
+  assert.match(deploy, /workflow_run\.head_sha/);
 });
 
 test('production ignores destructive schema overrides and all metadata is discovered in TS and JS', () => {

@@ -16,9 +16,9 @@ This repository now includes a production-oriented deployment setup for a Hetzne
 - `scripts/deploy.sh`
   - Fast-forward updates only, backs up PostgreSQL, rebuilds, migrates, and checks public JSON health
 - `.github/workflows/ci.yml`
-  - Runs frontend tests/build plus backend migration, PostgreSQL integration, unit tests, and build
+  - Runs the frontend build plus backend migration, PostgreSQL integration, unit tests, and build
 - `.github/workflows/deploy.yml`
-  - Deploys only after the `main` CI workflow succeeds
+  - Deploys only after the `main` CI workflow succeeds, pinned to that workflow run's commit
 - `deployment/nginx/bronzebrawl.conf`
   - Example host-nginx reverse proxy config; `/api` is isolated from the SPA fallback
 
@@ -65,7 +65,7 @@ Your deploy script assumes Docker and the Compose plugin already exist.
 
 ```bash
 chmod +x scripts/deploy.sh
-./scripts/deploy.sh
+DEPLOY_REVISION="$(git rev-parse HEAD)" ./scripts/deploy.sh
 ```
 
 This should expose:
@@ -105,9 +105,9 @@ Recommended value for `HETZNER_DEPLOY_PATH`:
 ## Deployment flow
 
 1. Push branch / open PR
-2. `CI` workflow runs builds, tests, and migrations against PostgreSQL
+2. `CI` workflow runs the frontend build, backend tests, and migrations against PostgreSQL
 3. Merge or push to `main`
-4. Successful `CI` completion triggers `Deploy to Hetzner`
+4. Successful `CI` completion triggers `Deploy to Hetzner` for the exact tested commit
 5. The server backs up PostgreSQL and runs `scripts/deploy.sh`
 6. Containers run the locked migration runner before the backend starts
 7. Public JSON health and frontend checks confirm the deployment

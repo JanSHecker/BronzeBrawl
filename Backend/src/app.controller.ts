@@ -36,7 +36,7 @@ export class AppController {
       readiness: readiness.ready ? 'ready' : 'not_ready',
       database: readiness.ready ? 'ok' : 'unavailable',
       timestamp: new Date().toISOString(),
-      ...(readiness.ready ? {} : { missingTables: readiness.missingTables }),
+      ...(readiness.ready ? {} : { reason: 'database_schema_unavailable' }),
     };
     if (!readiness.ready && response) response.status(HttpStatus.SERVICE_UNAVAILABLE);
     return body;

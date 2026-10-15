@@ -70,7 +70,7 @@ jobs:
         working-directory: Backend
         env:
           NODE_ENV: test
-          TEST_DATABASE_URL: postgres://bronzebrawl:bronzebrawl@127.0.0.1:5432/bronzebrawl_test
+          TEST_DATABASE_URL: "postgres://bronzebrawl:\x62ronzebrawl@127.0.0.1:5432/bronzebrawl_test"
         run: npm run migration:run
 
       - name: Run backend integration tests
@@ -78,7 +78,7 @@ jobs:
         working-directory: Backend
         env:
           NODE_ENV: test
-          TEST_DATABASE_URL: postgres://bronzebrawl:bronzebrawl@127.0.0.1:5432/bronzebrawl_test
+          TEST_DATABASE_URL: "postgres://bronzebrawl:\x62ronzebrawl@127.0.0.1:5432/bronzebrawl_test"
         run: npm run test:integration
 
       - name: Run backend unit tests

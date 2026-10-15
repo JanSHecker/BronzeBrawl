@@ -24,7 +24,8 @@ jobs:
           HETZNER_HOST: ${{ secrets.HETZNER_HOST }}
           HETZNER_USER: ${{ secrets.HETZNER_USER }}
           DEPLOY_PATH: ${{ secrets.HETZNER_DEPLOY_PATH }}
+          DEPLOY_REVISION: ${{ github.event.workflow_run.head_sha }}
           DEPLOY_REPO: https://github.com/JanSHecker/BronzeBrawl.git
         run: |
           ssh ${HETZNER_USER}@${HETZNER_HOST} "mkdir -p ${DEPLOY_PATH}"
-          ssh ${HETZNER_USER}@${HETZNER_HOST} "set -euo pipefail; if [ ! -d '${DEPLOY_PATH}/.git' ]; then git clone '${DEPLOY_REPO}' '${DEPLOY_PATH}'; fi; cd '${DEPLOY_PATH}'; chmod +x scripts/deploy.sh; ./scripts/deploy.sh"
+          ssh ${HETZNER_USER}@${HETZNER_HOST} "set -euo pipefail; if [ ! -d '${DEPLOY_PATH}/.git' ]; then git clone '${DEPLOY_REPO}' '${DEPLOY_PATH}'; fi; cd '${DEPLOY_PATH}'; chmod +x scripts/deploy.sh; DEPLOY_REVISION='${DEPLOY_REVISION}' ./scripts/deploy.sh"

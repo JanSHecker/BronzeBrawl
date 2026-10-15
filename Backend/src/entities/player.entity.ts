@@ -27,6 +27,9 @@ export class Player {
   @Column({ default: 0 })
   deathCounter: number;
 
+  @Column({ nullable: true })
+  playerTokenHash: string;
+
   @ManyToOne(() => Team, (team) => team.players)
   team: Team;
   @ManyToOne(() => Game, (game) => game.players)

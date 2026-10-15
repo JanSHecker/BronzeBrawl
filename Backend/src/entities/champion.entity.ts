@@ -24,6 +24,15 @@ export class Champion {
   @Column()
   summonerName: string;
 
+  @Column({ nullable: true })
+  riotId: string;
+
+  @Column({ nullable: true })
+  riotIdGameName: string;
+
+  @Column({ nullable: true })
+  riotIdTagLine: string;
+
   @OneToMany(() => Takedown, (takedown) => takedown.killer)
   kills: Takedown[];
 

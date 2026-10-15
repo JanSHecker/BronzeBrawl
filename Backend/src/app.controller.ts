@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpStatus, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Get, Headers, HttpException, HttpStatus, Optional, Post, Query, Res } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { Response } from 'express';
@@ -11,6 +11,7 @@ import { PunishmentService } from './punishment.service';
 import { RewardService } from './reward.service';
 import { DistributionService } from './distribution.service';
 import { TeamService } from './team.service';
+import { GameflowService } from './gameflow.service';
 import { checkDatabaseReadiness } from './database/readiness';
 
 @Controller()
@@ -26,6 +27,7 @@ export class AppController {
     private readonly distributionService: DistributionService,
     private readonly teamService: TeamService,
     @InjectDataSource() private readonly dataSource: DataSource,
+    @Optional() private readonly gameflow?: GameflowService,
   ) {}
 
   @Get('health')
@@ -48,98 +50,107 @@ export class AppController {
   }
 
   @Post('sendLoLInput')
-  async recieveLoLInput(@Body() input) {
-    await this.lolApiService.saveLolInput(input);
+  async receiveLoLInput(@Body() request: any, @Headers('x-game-token') token: string) {
+    if (!this.gameflow) return this.lolApiService.saveLolInput(request);
+    return this.gameflow.ingest(request, token);
   }
 
   @Get('runGame')
   async runGame(
-    @Query('punishmentAmount') pAmount,
-    @Query('rewardAmount') rAmount,
+    @Query('punishmentAmount') punishmentAmount,
+    @Query('rewardAmount') rewardAmount,
     @Query('rotationMode') rotationMode,
     @Query('defaultCounter') defaultCounter,
   ) {
-    const gameTemplate = {
-      punishmentAmount: pAmount,
-      rewardAmount: rAmount,
-      rotationMode: rotationMode,
-      defaultRotationCounter: defaultCounter,
-    };
-    const game = await this.gameService.createGame(gameTemplate);
-    this.appService.runGame(game.gameId);
-    console.log(`A new game was created with ID ${game.gameId}`);
+    if (this.gameflow) return this.gameflow.runGame({ punishmentAmount, rewardAmount, rotationMode, defaultCounter });
+    const game = await this.gameService.createGame({ punishmentAmount, rewardAmount, rotationMode, defaultRotationCounter: defaultCounter });
     return game;
   }
+
   @Post('createPlayer')
   async createPlayer(@Body() playerData) {
-    return await this.playerService.createPlayer(playerData);
+    if (this.gameflow) return this.gameflow.createPlayer(playerData);
+    return this.playerService.createPlayer(playerData);
   }
+
   @Get('getTeams')
   async getTeams(@Query('id') gameId) {
-    const res = {
-      players: await this.playerService.getAllPlayers(gameId),
-      teams: await this.teamService.getTeams(gameId),
-    };
-    return res;
+    if (this.gameflow) return this.gameflow.getTeams(gameId);
+    return { players: await this.playerService.getAllPlayers(gameId), teams: await this.teamService.getTeams(gameId) };
   }
+
   @Post('joinTeam')
-  joinTeam(@Body() playerTeamPair) {
-    this.playerService.joinTeam(playerTeamPair.player, playerTeamPair.team);
+  async joinTeam(@Body() input, @Headers('x-player-token') token: string) {
+    if (this.gameflow) return this.gameflow.joinTeam(input, token);
+    return this.playerService.joinTeam(input.player, input.team);
   }
+
   @Get('getAllChampions')
-  getAllChampions(@Query('id') game) {
-    return this.championService.getAllChampions(game);
+  async getAllChampions(@Query('id') gameId) {
+    if (this.gameflow) return this.gameflow.getAllChampions(gameId);
+    return this.championService.getAllChampions(gameId);
   }
+
   @Post('chooseChampion')
-  chooseChampion(@Body() playerChampionPair) {
-    this.playerService.chooseChampion(playerChampionPair);
+  async chooseChampion(@Body() input, @Headers('x-player-token') token: string) {
+    if (this.gameflow) return this.gameflow.chooseChampion(input, token);
+    return this.playerService.chooseChampion(input);
   }
+
   @Post('Dummygame')
-  createDummygame(@Body() game) {
-    this.gameService.createDummygame(game.id);
+  createDummygame() {
+    throw new HttpException('public dummy game is disabled', HttpStatus.NOT_FOUND);
   }
+
   @Post('createPunishment')
-  distributePunishment(@Body() punishment) {
-    this.distributionService.distributePunishment(punishment);
+  createPunishment() {
+    throw new HttpException('public punishment creation is disabled', HttpStatus.NOT_FOUND);
   }
+
   @Get('kda')
-  getKDA(@Query('id') champion) {
-    return this.championService.getKDA(champion);
+  async getKDA(@Query('id') championId) {
+    if (this.gameflow) return this.gameflow.kda(championId);
+    return this.championService.getKDA(championId);
   }
+
   @Post('confirmPunishment')
-  confirmPunishment(@Body() punishment) {
-    this.punishmentService.confirmPunishment(punishment.id);
+  async confirmPunishment(@Body() input, @Headers('x-player-token') token: string) {
+    if (this.gameflow) return this.gameflow.confirmPunishment(input, token);
+    return this.punishmentService.confirmPunishment(input.id);
   }
+
   @Post('confirmReward')
-  async confirmReward(@Body() reward) {
-    await this.distributionService.distributePunishment(reward);
-    this.rewardService.confirmReward(reward.id);
+  async confirmReward(@Body() input, @Headers('x-player-token') token: string) {
+    if (this.gameflow) return this.gameflow.confirmReward(input, token);
+    await this.distributionService.distributePunishment(input);
+    return this.rewardService.confirmReward(input.id);
   }
+
   @Get('getChangeCounters')
-  getChangeCounter(@Query('id') playerId) {
+  async getChangeCounter(@Query('id') playerId, @Headers('x-player-token') token: string) {
+    if (this.gameflow) return this.gameflow.getChangeCounters(playerId, token);
     return this.playerService.getChangeCounters(playerId);
   }
+
   @Get('Status')
-  async getStatus(
-    @Query('playerId') playerId,
-    @Query('championId') championId,
-    @Query('enemyTeam') teamId,
-  ) {
-    const status = {
+  async getStatus(@Query('playerId') playerId, @Headers('x-player-token') token: string) {
+    if (this.gameflow) return this.gameflow.status(playerId, token);
+    return {
       punishments: await this.punishmentService.getPunishments(playerId),
       rewards: await this.rewardService.getRewards(playerId),
       counter: await this.playerService.getChangeCounters(playerId),
-      kda: await this.championService.getKDA(championId),
-      enemyTeam: await this.championService.getTeamChampions(teamId),
     };
-    return status;
   }
+
   @Get('getSettings')
   async getSettings(@Query('gameId') gameId) {
-    return await this.gameService.getGame(gameId);
+    if (this.gameflow) return this.gameflow.getSettings(gameId);
+    return this.gameService.getGame(gameId);
   }
+
   @Post('deletePlayer')
-  deletePlayer(@Body() player) {
-    this.playerService.deletePlayer(player.id);
+  async deletePlayer(@Body() input, @Headers('x-player-token') token: string) {
+    if (this.gameflow) return this.gameflow.deletePlayer(input, token);
+    return this.playerService.deletePlayer(input.id);
   }
 }

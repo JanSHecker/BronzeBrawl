@@ -21,6 +21,9 @@ export class Event {
   @Column()
   eventType: string;
 
+  @Column({ type: 'jsonb', nullable: true })
+  payload: Record<string, any>;
+
   @ManyToOne(() => Game, (game) => game.events)
   game: Game;
 

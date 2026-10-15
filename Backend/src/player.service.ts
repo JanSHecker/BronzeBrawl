@@ -43,7 +43,7 @@ export class PlayerService {
     return player;
   }
   async joinTeam(playerId, teamId) {
-    await this.playerRepository
+    return await this.playerRepository
       .createQueryBuilder('player')
       .update(Player)
       .set({
@@ -86,7 +86,7 @@ export class PlayerService {
     console.log(champion.player);
     if (priorChampion !== null) {
       if (isKiller) {
-        this.playerRepository
+        await this.playerRepository
           .createQueryBuilder('player')
           .leftJoinAndSelect('player.champion', 'champion')
           .update(Player)
@@ -98,7 +98,7 @@ export class PlayerService {
           })
           .execute();
       } else {
-        this.playerRepository
+        await this.playerRepository
           .createQueryBuilder('player')
           .leftJoinAndSelect('player.champion', 'champion')
           .update(Player)

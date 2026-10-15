@@ -44,7 +44,7 @@ export class AppService {
         priorInput.events.Events,
       );
 
-      this.saveEvents(newEvents, game);
+      await this.saveEvents(newEvents, game);
 
       gameEnded = await this.eventService.hasGameEnded(game);
     }

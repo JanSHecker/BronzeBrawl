@@ -12,10 +12,10 @@ export class TakedownService {
     private readonly playerService: PlayerService,
   ) {}
 
-  createTakedown(takedownData: Partial<Takedown>): Promise<Takedown> {
+  async createTakedown(takedownData: Partial<Takedown>): Promise<Takedown> {
     const takedown = this.takedownRepository.create(takedownData);
-    this.playerService.updateChangeCounter(takedown.killer, true);
-    this.playerService.updateChangeCounter(takedown.killed, false);
+    await this.playerService.updateChangeCounter(takedown.killer, true);
+    await this.playerService.updateChangeCounter(takedown.killed, false);
     return this.takedownRepository.save(takedown);
   }
 }

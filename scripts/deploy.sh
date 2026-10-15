@@ -11,17 +11,36 @@ if [[ ! -f .env.prod ]]; then
 fi
 
 BRANCH="${DEPLOY_BRANCH:-main}"
+COMPOSE=(docker compose --env-file .env.prod -f docker-compose.prod.yml)
+BACKUP_DIR="${BACKUP_DIR:-$APP_DIR/backups}"
+BACKUP_FILE="$BACKUP_DIR/bronzebrawl-$(date -u +%Y%m%dT%H%M%SZ).sql"
+PUBLIC_HEALTH_URL="${PUBLIC_HEALTH_URL:-http://127.0.0.1:8080/api/health}"
 
-echo "[deploy] Updating repository to origin/${BRANCH}"
+# Never discard operator changes on a live host. The fast-forward pull is the
+# only repository mutation and fails if the checkout is not clean.
 git fetch origin "$BRANCH"
-git checkout "$BRANCH"
-git reset --hard "origin/$BRANCH"
+if [[ -n "$(git status --porcelain)" ]]; then
+  echo "Refusing deployment: working tree has local changes."
+  exit 1
+fi
+git pull --ff-only origin "$BRANCH"
 
+mkdir -p "$BACKUP_DIR"
+echo "[deploy] Starting PostgreSQL and waiting for it to become healthy"
+"${COMPOSE[@]}" up -d --wait postgres
+
+echo "[deploy] Backing up database to $BACKUP_FILE"
+"${COMPOSE[@]}" exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > "$BACKUP_FILE"
+
+# The backend image runs the reviewed, locked migration runner before Nest.
 echo "[deploy] Rebuilding containers"
-docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build --remove-orphans
+"${COMPOSE[@]}" up -d --wait --build --remove-orphans
 
-echo "[deploy] Running health checks"
-curl -fsS http://127.0.0.1:3000/health >/dev/null
-curl -fsS http://127.0.0.1:8080 >/dev/null
+echo "[deploy] Checking public JSON API health"
+node scripts/health.cjs "$PUBLIC_HEALTH_URL"
+
+# A basic frontend probe confirms the SPA remains available without using it as
+# an API fallback.
+curl -fsS http://127.0.0.1:8080/ >/dev/null
 
 echo "[deploy] Done"

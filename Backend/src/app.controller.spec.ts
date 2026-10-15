@@ -9,6 +9,8 @@ import { PunishmentService } from './punishment.service';
 import { RewardService } from './reward.service';
 import { DistributionService } from './distribution.service';
 import { TeamService } from './team.service';
+import { getDataSourceToken } from '@nestjs/typeorm';
+import { REQUIRED_APPLICATION_TABLES } from './database/readiness';
 
 const createMock = () => ({
   getHello: jest.fn(),
@@ -49,6 +51,13 @@ describe('AppController', () => {
         { provide: RewardService, useValue: createMock() },
         { provide: DistributionService, useValue: createMock() },
         { provide: TeamService, useValue: createMock() },
+        {
+          provide: getDataSourceToken(),
+          useValue: {
+            isInitialized: true,
+            query: jest.fn().mockResolvedValue(REQUIRED_APPLICATION_TABLES.map((table_name) => ({ table_name }))),
+          },
+        },
       ],
     }).compile();
 
@@ -56,10 +65,12 @@ describe('AppController', () => {
   });
 
   describe('health', () => {
-    it('should return ok status with timestamp', () => {
-      expect(appController.getHealth()).toEqual(
+    it('should return a ready JSON contract with timestamp', async () => {
+      expect(await appController.getHealth()).toEqual(
         expect.objectContaining({
           status: 'ok',
+          readiness: 'ready',
+          database: 'ok',
           timestamp: expect.any(String),
         }),
       );

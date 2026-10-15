@@ -1,4 +1,7 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, HttpStatus, Post, Query, Res } from '@nestjs/common';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
+import { Response } from 'express';
 import { AppService } from './app.service';
 import { LolAPIService } from './lolAPI.service';
 import { PlayerService } from './player.service';
@@ -8,6 +11,7 @@ import { PunishmentService } from './punishment.service';
 import { RewardService } from './reward.service';
 import { DistributionService } from './distribution.service';
 import { TeamService } from './team.service';
+import { checkDatabaseReadiness } from './database/readiness';
 
 @Controller()
 export class AppController {
@@ -21,14 +25,21 @@ export class AppController {
     private readonly rewardService: RewardService,
     private readonly distributionService: DistributionService,
     private readonly teamService: TeamService,
+    @InjectDataSource() private readonly dataSource: DataSource,
   ) {}
 
   @Get('health')
-  getHealth() {
-    return {
-      status: 'ok',
+  async getHealth(@Res({ passthrough: true }) response?: Response) {
+    const readiness = await checkDatabaseReadiness(this.dataSource);
+    const body = {
+      status: readiness.ready ? 'ok' : 'error',
+      readiness: readiness.ready ? 'ready' : 'not_ready',
+      database: readiness.ready ? 'ok' : 'unavailable',
       timestamp: new Date().toISOString(),
+      ...(readiness.ready ? {} : { missingTables: readiness.missingTables }),
     };
+    if (!readiness.ready && response) response.status(HttpStatus.SERVICE_UNAVAILABLE);
+    return body;
   }
 
   @Get('lolInput')

@@ -30,8 +30,8 @@ export class RewardService {
       .where('reward.player =:playerID', { playerID: playerId })
       .getMany();
   }
-  confirmReward(rewardId) {
-    this.rewardRepository
+  async confirmReward(rewardId) {
+    return await this.rewardRepository
       .createQueryBuilder('reward')
       .update()
       .set({

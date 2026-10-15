@@ -20,6 +20,24 @@ export class Game {
   @Column({ nullable: true })
   defaultRotationCounter: number;
 
+  @Column({ default: 'waiting_for_feed' })
+  state: string;
+
+  @Column({ nullable: true })
+  hostTokenHash: string;
+
+  @Column({ nullable: true })
+  lastGameTime: number;
+
+  @Column({ nullable: true })
+  lastFeedAt: Date;
+
+  @Column({ nullable: true })
+  rosterFingerprint: string;
+
+  @Column({ type: 'jsonb', nullable: true })
+  feedSnapshot: Record<string, any>;
+
   @OneToMany(() => Event, (event) => event.game)
   events: Event[];
 

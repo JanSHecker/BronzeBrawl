@@ -13,16 +13,23 @@ export const REQUIRED_APPLICATION_TABLES = [
 ] as const;
 
 export const REQUIRED_APPLICATION_COLUMNS: Record<string, readonly string[]> = {
-  game: ['gameId', 'punishmentAmount', 'rewardAmount', 'rotationMode', 'defaultRotationCounter'],
+  game: [
+    'gameId', 'punishmentAmount', 'rewardAmount', 'rotationMode', 'defaultRotationCounter',
+    'state', 'hostTokenHash', 'lastGameTime', 'lastFeedAt', 'rosterFingerprint', 'feedSnapshot',
+  ],
   team: ['teamId', 'teamName', 'gameGameId'],
-  champion: ['championId', 'championName', 'summonerName', 'teamTeamId'],
-  player: ['playerId', 'playerName', 'killCounter', 'deathCounter', 'teamTeamId', 'gameGameId', 'championChampionId'],
+  champion: ['championId', 'championName', 'summonerName', 'teamTeamId', 'riotId', 'riotIdGameName', 'riotIdTagLine'],
+  player: ['playerId', 'playerName', 'killCounter', 'deathCounter', 'teamTeamId', 'gameGameId', 'championChampionId', 'playerTokenHash'],
   punishment: ['punishmentId', 'amount', 'punishmentType', 'recieved', 'playerPlayerId', 'distributorPlayerId'],
   reward: ['rewardId', 'amount', 'rewardType', 'distributed', 'playerPlayerId'],
   takedown: ['takedownId', 'multiKill', 'shutdown', 'killerChampionId', 'killedChampionId', 'punishmentPunishmentId', 'rewardRewardId'],
-  event: ['eventId', 'ingameId', 'eventType', 'gameGameId', 'takedownTakedownId', 'rewardRewardId'],
+  event: ['eventId', 'ingameId', 'eventType', 'gameGameId', 'takedownTakedownId', 'rewardRewardId', 'payload'],
   champion_assists_takedown: ['championChampionId', 'takedownTakedownId'],
 };
+
+export const REQUIRED_UNIQUE_CONSTRAINTS = [
+  ['event', ['gameGameId', 'ingameId']],
+] as const;
 
 export const REQUIRED_FOREIGN_KEYS = [
   ['team', ['gameGameId'], 'game', ['gameId']],
@@ -44,10 +51,11 @@ export const REQUIRED_FOREIGN_KEYS = [
   ['champion_assists_takedown', ['takedownTakedownId'], 'takedown', ['takedownId']],
 ] as const;
 
-const REQUIRED_MIGRATION = {
-  name: 'InitialSchema1710000000000',
-  timestamp: 1710000000000,
-};
+export const REQUIRED_MIGRATIONS = [
+  { name: 'InitialSchema1710000000000', timestamp: 1710000000000 },
+  { name: 'GameflowSecurity1710000001000', timestamp: 1710000001000 },
+  { name: 'GameflowEventIdentity1710000002000', timestamp: 1710000002000 },
+] as const;
 
 export type DatabaseReadiness =
   | { ready: true; missingTables: [] }
@@ -73,10 +81,14 @@ export async function checkDatabaseReadiness(
 
   try {
     const migrationRows = await dataSource.query(
-      'SELECT 1 FROM "typeorm_migrations" WHERE timestamp = $1 AND name = $2 LIMIT 1',
-      [REQUIRED_MIGRATION.timestamp, REQUIRED_MIGRATION.name],
-    ) as Array<{ '?column?'?: number }>;
-    if (migrationRows.length === 0) {
+      `SELECT timestamp, name FROM "typeorm_migrations"
+       WHERE (timestamp = $1 AND name = $2)
+          OR (timestamp = $3 AND name = $4)
+          OR (timestamp = $5 AND name = $6)`,
+      REQUIRED_MIGRATIONS.flatMap((migration) => [migration.timestamp, migration.name]),
+    ) as Array<{ timestamp: string | number; name: string }>;
+    const appliedMigrations = new Set(migrationRows.map((row) => `${row.timestamp}:${row.name}`));
+    if (REQUIRED_MIGRATIONS.some((migration) => !appliedMigrations.has(`${migration.timestamp}:${migration.name}`))) {
       return { ready: false, missingTables: [...REQUIRED_APPLICATION_TABLES] };
     }
 
@@ -101,6 +113,7 @@ export async function checkDatabaseReadiness(
               CASE constraint_row.contype
                 WHEN 'p' THEN 'PRIMARY KEY'
                 WHEN 'f' THEN 'FOREIGN KEY'
+                WHEN 'u' THEN 'UNIQUE'
               END AS constraint_type,
               table_column.attname AS column_name,
               table_columns.ordinal_position,
@@ -125,7 +138,7 @@ export async function checkDatabaseReadiness(
         AND referenced_column.attnum = referenced_columns.attnum
        WHERE table_schema.nspname = current_schema()
          AND table_class.relname = ANY($1::text[])
-         AND constraint_row.contype IN ('p', 'f')`,
+         AND constraint_row.contype IN ('p', 'f', 'u')`,
       [REQUIRED_APPLICATION_TABLES],
     ) as SchemaRow[];
     const constraints = new Map<string, SchemaRow[]>();
@@ -160,6 +173,10 @@ export async function checkDatabaseReadiness(
     }
     for (const [table, columns, referencedTable, referencedColumns] of REQUIRED_FOREIGN_KEYS) {
       if (!hasConstraint(table, 'FOREIGN KEY', columns, referencedTable, referencedColumns)) missingTables.add(table);
+    }
+
+    for (const [table, columns] of REQUIRED_UNIQUE_CONSTRAINTS) {
+      if (!hasConstraint(table, 'UNIQUE', columns)) missingTables.add(table);
     }
 
     return missingTables.size === 0

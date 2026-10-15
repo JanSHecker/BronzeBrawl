@@ -25,8 +25,8 @@ export class PunishmentService {
       .leftJoinAndSelect('punishment.distributor', 'distributor')
       .getMany();
   }
-  confirmPunishment(punishmentId) {
-    this.punishmentRepository
+  async confirmPunishment(punishmentId) {
+    return await this.punishmentRepository
       .createQueryBuilder('punishment')
       .update()
       .set({

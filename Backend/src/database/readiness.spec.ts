@@ -3,6 +3,8 @@ import {
   REQUIRED_APPLICATION_COLUMNS,
   REQUIRED_APPLICATION_TABLES,
   REQUIRED_FOREIGN_KEYS,
+  REQUIRED_MIGRATIONS,
+  REQUIRED_UNIQUE_CONSTRAINTS,
 } from './readiness';
 
 const primaryKeys: Record<string, string[]> = {
@@ -35,8 +37,17 @@ function completeSchemaQuery() {
       referenced_column_name: referencedColumns[index],
     })));
   }
+  for (const [table_name, names] of REQUIRED_UNIQUE_CONSTRAINTS) {
+    constraints.push(...names.map((column_name, index) => ({
+      table_name,
+      constraint_name: `uq_${table_name}`,
+      constraint_type: 'UNIQUE',
+      column_name,
+      ordinal_position: index + 1,
+    })));
+  }
   return jest.fn().mockImplementation((sql: string) => {
-    if (sql.includes('typeorm_migrations')) return [{ '?column?': 1 }];
+    if (sql.includes('typeorm_migrations')) return [...REQUIRED_MIGRATIONS];
     if (sql.includes('information_schema.columns')) return columns;
     return constraints;
   });
@@ -54,7 +65,7 @@ describe('database readiness', () => {
     const result = await checkDatabaseReadiness({
       isInitialized: true,
       query: jest.fn().mockImplementation((sql: string) => {
-        if (sql.includes('typeorm_migrations')) return [{ '?column?': 1 }];
+        if (sql.includes('typeorm_migrations')) return [...REQUIRED_MIGRATIONS];
         if (sql.includes('information_schema.columns')) return [{ table_name: 'game', column_name: 'gameId' }];
         return [];
       }),
@@ -70,7 +81,7 @@ describe('database readiness', () => {
 
   test('accepts PostgreSQL ordinal-aware composite primary-key metadata', async () => {
     const query = completeSchemaQuery().mockImplementation((sql: string) => {
-      if (sql.includes('typeorm_migrations')) return [{ '?column?': 1 }];
+      if (sql.includes('typeorm_migrations')) return [...REQUIRED_MIGRATIONS];
       if (sql.includes('information_schema.columns')) {
         return Object.entries(REQUIRED_APPLICATION_COLUMNS).flatMap(([table_name, names]) =>
           names.map((column_name) => ({ table_name, column_name })));
@@ -88,7 +99,7 @@ describe('database readiness', () => {
 
   test('does not report a complete synchronized-looking schema without the migration ledger entry', async () => {
     const query = completeSchemaQuery().mockImplementation((sql: string) => {
-      if (sql.includes('typeorm_migrations')) return [];
+      if (sql.includes('typeorm_migrations')) return REQUIRED_MIGRATIONS.slice(0, -1);
       return completeSchemaQuery();
     });
     const result = await checkDatabaseReadiness({ isInitialized: true, query });

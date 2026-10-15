@@ -22,6 +22,7 @@ import { PlayerService } from './player.service';
 import { Reward } from './entities/reward.entity';
 import { RewardService } from './reward.service';
 import { DistributionService } from './distribution.service';
+import { GameflowService } from './gameflow.service';
 
 @Module({
   imports: [
@@ -51,6 +52,7 @@ import { DistributionService } from './distribution.service';
     PlayerService,
     RewardService,
     DistributionService,
+    GameflowService,
   ],
 })
 export class AppModule {}

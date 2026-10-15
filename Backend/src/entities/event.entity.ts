@@ -5,12 +5,14 @@ import {
   OneToOne,
   ManyToOne,
   JoinColumn,
+  Unique,
 } from 'typeorm';
 import { Game } from './game.entity';
 import { Takedown } from './takedown.entity';
 import { Reward } from './reward.entity';
 
 @Entity()
+@Unique('UQ_event_game_ingame', ['game', 'ingameId'])
 export class Event {
   @PrimaryGeneratedColumn()
   eventId: number;
@@ -20,6 +22,9 @@ export class Event {
 
   @Column()
   eventType: string;
+
+  @Column({ type: 'jsonb', nullable: true })
+  payload: Record<string, any>;
 
   @ManyToOne(() => Game, (game) => game.events)
   game: Game;

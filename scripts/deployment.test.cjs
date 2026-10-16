@@ -119,6 +119,14 @@ test('nginx public api cannot fall through to SPA', () => {
   assert.match(nginx, /location = \/api/);
 });
 
+test('both nginx examples allow the same bounded snapshot size as the backend', () => {
+  for (const name of ['bronze-brawl.conf', 'bronzebrawl.conf']) {
+    const nginx = read(`deployment/nginx/${name}`);
+    assert.match(nginx, /location \^~ \/api\/\s*\{[^}]*client_max_body_size 4m;/);
+  }
+  assert.match(read('Backend/src/http.config.ts'), /JSON_BODY_LIMIT = 4 \* 1024 \* 1024/);
+});
+
 test('CI runs real postgres integration and deployment/routing tests before deployment', () => {
   const ci = read('.github/workflows/ci.yml');
   assert.match(ci, /image: postgres:16-alpine/);

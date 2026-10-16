@@ -93,6 +93,14 @@ Expected routing:
 
 After copying the config into `/etc/nginx/sites-available/`, enable it and reload nginx.
 
+Snapshot uploads require `client_max_body_size 4m` inside the `/api/` location,
+matching the backend's 4 MiB JSON body limit (including the request envelope).
+Apply this to the active HTTPS vhost and any additional reverse proxy too.
+Existing host-nginx configs are not updated by rebuilding the containers:
+update the config, run `sudo nginx -t`, then `sudo systemctl reload nginx`.
+HTTP 413 in the Companion indicates a size limit, not an invalid connection
+code; it retries automatically after the backend/proxy configuration is fixed.
+
 ### 6. HTTPS
 
 After nginx is serving the domain correctly, issue or renew the Let’s Encrypt certificate as usual.

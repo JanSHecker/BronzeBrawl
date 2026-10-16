@@ -33,6 +33,14 @@ liefert. Ein Lebenszeichen wird auch ohne laufendes LoL-Spiel gesendet. Nach
 Netzwerkausfall versucht der Companion automatisch erneut; **`t`** zeigt den Status
 und die Zahl gesendeter Snapshots. Statusänderungen erscheinen automatisch.
 
+**HTTP 413 / „Live-Snapshot zu groß“:** Kein neuer Verbindungscode nötig.
+Der Server akzeptiert bis zu **4 MiB** pro JSON-Anfrage einschließlich Spiel-ID.
+Backend und vorgeschalteter Proxy müssen dieses Limit erlauben; bei dieser
+Meldung die Server-Konfiguration prüfen lassen. Der Companion bleibt aktiv und
+versucht den Versand mit frischen Daten automatisch erneut (bis zu 12 Sekunden
+Abstand). Erfolgreiche Lebenszeichen bedeuten weiterhin „verbunden“, auch wenn
+ein Snapshot abgelehnt wurde; die Zahl gesendeter Snapshots steigt dann nicht.
+
 Die Verbindung wird in `%LOCALAPPDATA%\BronzeBrawl\companion\connection.json`
 gespeichert und beim Neustart wieder aufgenommen. Die Datei enthält ausschließlich
 den eingeschränkten Feed-Schlüssel, keinen Host- oder LoL-Token: nicht weitergeben.

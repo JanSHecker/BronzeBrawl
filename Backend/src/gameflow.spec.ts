@@ -1,4 +1,10 @@
 import 'reflect-metadata';
+import { Test } from '@nestjs/testing';
+import { NestExpressApplication } from '@nestjs/platform-express';
+import request from 'supertest';
+import { CompanionController } from './companion.controller';
+import { GameflowService } from './gameflow.service';
+import { configureHttpBodyParser } from './http.config';
 import { Game } from './entities/game.entity';
 import { Player } from './entities/player.entity';
 import { Team } from './entities/team.entity';
@@ -67,6 +73,35 @@ async function setup() {
 }
 beforeEach(()=>{db=new MemoryDB(); service=new Service(db as any);});
 describe('gameflow contract',()=>{
+  test('HTTP accepts and ingests a valid event history above 100 KiB with authorization and idempotency intact', async () => {
+    const module = await Test.createTestingModule({
+      controllers: [CompanionController],
+      providers: [{ provide: GameflowService, useValue: service }],
+    }).compile();
+    const app = module.createNestApplication<NestExpressApplication>();
+    configureHttpBodyParser(app);
+    await app.init();
+    try {
+      const g = await service.runGame(settings);
+      const connection = await service.connectCompanion({ gameId: g.gameId }, g.hostToken);
+      const body = { gameId: g.gameId, input: feed(Array.from({ length: 1200 }, (_, index) => kill(index + 1)), 1200) };
+      expect(Buffer.byteLength(JSON.stringify(body))).toBeGreaterThan(100 * 1024);
+      await request(app.getHttpServer()).post('/companion/input').set('X-Companion-Token', 'wrong')
+        .send(body).expect(403);
+      expect(db.all(Event)).toHaveLength(0);
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await request(app.getHttpServer()).post('/companion/input').set('X-Companion-Token', connection.token)
+          .send(body).expect(201).expect(response => {
+            expect(response.body).toMatchObject({ gameId: g.gameId, state: 'live' });
+          });
+        expect(db.all(Event)).toHaveLength(1200);
+        expect(db.all(Game)[0].feedSnapshot).toEqual(body.input);
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
   test('companion uses a scoped durable capability, heartbeat, expiry and revocation', async () => {
     const g = await service.runGame(settings);
     await expect(service.connectCompanion({ gameId: g.gameId }, 'wrong')).rejects.toMatchObject({ status: 403 });

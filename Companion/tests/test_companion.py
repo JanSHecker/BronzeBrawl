@@ -71,6 +71,7 @@ class DirectNetwork(FakeNetwork):
     def __init__(self):
         super().__init__()
         self.unavailable = False
+        self.input_fail = None
         self.sent = threading.Event()
         self.state = 'live'
 
@@ -84,6 +85,8 @@ class DirectNetwork(FakeNetwork):
             raise RemoteError(self.fail)
         if url.endswith('/heartbeat'):
             return {'ok': True, 'gameId': body['gameId']}
+        if self.input_fail:
+            raise RemoteError(self.input_fail)
         self.sent.set()
         return {'gameId': body['gameId'], 'state': self.state}
 
@@ -148,6 +151,49 @@ class DirectFeedTests(unittest.TestCase):
         finally:
             restored.close()
 
+    def test_input_413_keeps_heartbeats_and_retries_fresh_data_without_advancing_session(self):
+        self.app.feed_tick()
+        previous_session = dict(self.app.sessions)
+        last_success = self.app.feed['lastSuccess']
+        self.net.data = json.loads(json.dumps(self.net.data))
+        self.net.data['gameData']['gameTime'] = 11
+        self.net.input_fail = 413
+        for attempt in range(8):
+            self.assertEqual(self.app.feed_tick(), 6 if attempt == 0 else 12)
+            self.assertTrue(self.app.feed['enabled'])
+            self.assertTrue(self.app.feed['connected'])
+            self.assertEqual(self.app.feed['sent'], 1)
+            self.assertEqual(self.app.feed['lastSuccess'], last_success)
+            self.assertEqual(self.app.sessions, previous_session)
+            self.assertIn('HTTP 413', self.app.feed['error'])
+            self.assertIn('Größenlimit', companion.connection_status(self.app.feed))
+            self.assertIn('App verbunden', companion.connection_status(self.app.feed))
+            self.assertNotIn('Verbindungscode', self.app.feed['error'])
+        self.assertEqual(sum(call[1].endswith('/companion/heartbeat') for call in self.net.calls), 9)
+        self.assertEqual(sum(call[1].endswith('/allgamedata') for call in self.net.calls), 9)
+        self.net.input_fail = None
+        self.net.data = json.loads(json.dumps(self.net.data))
+        self.net.data['gameData']['gameTime'] = 12
+        self.assertEqual(self.app.feed_tick(), 3)
+        self.assertEqual(self.app.feed['sent'], 2)
+        self.assertEqual(self.app.feed['failures'], 0)
+        self.assertIsNone(self.app.feed['error'])
+        self.assertEqual(self.net.calls[-1][3]['input']['gameData']['gameTime'], 12)
+        self.assertEqual(next(iter(self.app.sessions.values()))['clock'], 12)
+        self.assertEqual(self.app.companion_token, 'a' * 64)
+
+    def test_heartbeat_413_does_not_claim_connectivity_or_disable_sender(self):
+        self.app.feed_tick()
+        self.net.fail = 413
+        self.app.feed_tick()
+        self.assertTrue(self.app.feed['enabled'])
+        self.assertFalse(self.app.feed['connected'])
+        self.assertIn('HTTP 413', self.app.feed['error'])
+        self.net.fail = None
+        self.app.feed_tick()
+        self.assertTrue(self.app.feed['connected'])
+        self.assertIsNone(self.app.feed['error'])
+
     def test_changed_game_is_not_forwarded_but_heartbeat_continues(self):
         self.app.feed_tick()
         self.net.data['gameData']['gameTime'] = 0
@@ -184,6 +230,7 @@ class DirectHTTPTests(unittest.TestCase):
     def test_real_http_sender_needs_no_browser_or_local_feed_server(self):
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
         received = []
+        input_status = {'value': 200}
         class Backend(BaseHTTPRequestHandler):
             def log_message(self, *args):
                 pass
@@ -192,7 +239,7 @@ class DirectHTTPTests(unittest.TestCase):
                 received.append((self.path, self.headers.get('X-Companion-Token'), data))
                 response = {'ok': True, 'gameId': data['gameId']} if self.path.endswith('/heartbeat') else {'gameId': data['gameId'], 'state': 'live'}
                 raw = json.dumps(response).encode()
-                self.send_response(200)
+                self.send_response(200 if self.path.endswith('/heartbeat') else input_status['value'])
                 self.send_header('Content-Type', 'application/json')
                 self.send_header('Content-Length', str(len(raw)))
                 self.end_headers()
@@ -216,6 +263,17 @@ class DirectHTTPTests(unittest.TestCase):
                     self.assertEqual([row[0] for row in received], ['/api/companion/heartbeat', '/api/companion/input'] * 2)
                     self.assertTrue(all(row[1] == 'a' * 64 and row[2]['gameId'] == 8 for row in received))
                     self.assertEqual(received[1][2]['input'], FakeNetwork().data)
+                    # Exercise urllib's real HTTPError mapping, not only a fake transport.
+                    input_status['value'] = 413
+                    self.assertEqual(app.feed_tick(), 6)
+                    self.assertTrue(app.feed['enabled'])
+                    self.assertTrue(app.feed['connected'])
+                    self.assertEqual(app.feed['sent'], 2)
+                    self.assertIn('HTTP 413', app.feed['error'])
+                    input_status['value'] = 200
+                    self.assertEqual(app.feed_tick(), 3)
+                    self.assertEqual(app.feed['sent'], 3)
+                    self.assertIsNone(app.feed['error'])
                 finally:
                     app.close()
         finally:
@@ -422,6 +480,22 @@ class AppTests(unittest.TestCase):
         try: self.app.feed_tick()
         finally: self.app.feed_lock.release()
         self.assertFalse(any(c[1].endswith('/sendLoLInput') for c in self.net.calls))
+    def test_legacy_feed_413_retries_without_new_credentials_or_skipping_rejected_clock(self):
+        self.net.fail = 413
+        for attempt in range(8):
+            delay = self.app.feed_tick()
+            self.assertTrue(self.app.feed['enabled'])
+            self.assertLessEqual(delay, 60)
+            self.assertGreater(delay, 3)
+            self.assertEqual(self.app.feed['sent'], 0)
+            self.assertFalse(self.app.sessions)
+            self.assertIn('HTTP 413', self.app.feed['error'])
+            self.assertNotIn('erneut verbinden', self.app.feed['error'])
+        self.net.fail = None
+        self.app.feed_tick()  # Same clock must still be eligible after rejection.
+        self.assertEqual(self.app.feed['sent'], 1)
+        self.assertIsNone(self.app.feed['error'])
+        self.assertEqual(self.app.feed['failures'], 0)
     def test_server_download_sha_and_raw_upload(self):
         item = {'matchId': 'EUW1_123', 'gameVersion': '16.20.123.456', 'sha256': hashlib.sha256(self.net.bytes).hexdigest(), 'sizeBytes': len(self.net.bytes)}
         self.net.pool = [item]

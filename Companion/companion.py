@@ -265,6 +265,8 @@ class App:
                     self.feed.update(sent=self.feed['sent'] + 1, failures=0, error=None, lastSuccess=int(time.time()))
                 return 3
             except RemoteError as e:
+                if e.status == 413:
+                    return self._feed_size_failure()
                 with self.lock:
                     if e.status in (401, 403, 409) or (400 <= e.status < 500 and e.status != 429):
                         self.feed.update(enabled=False, error=f'Spielverbindung ungültig (HTTP {e.status}). Bitte Spiel-ID und Schlüssel erneut verbinden.')
@@ -278,6 +280,7 @@ class App:
     def _direct_tick(self, gid, token, backend):
         """Independent HTTPS sender; browser and replay jobs are not involved."""
         headers = {'X-Companion-Token': token}
+        heartbeat_ok = False
         try:
             try:
                 data = self.live_data()
@@ -306,8 +309,9 @@ class App:
             result = self.network.request('POST', backend + '/companion/heartbeat', headers, {'gameId': gid, 'availability': availability})
             if not isinstance(result, dict) or result.get('ok') is not True or result.get('gameId') != gid:
                 raise RemoteError(502)
+            heartbeat_ok = True
             with self.lock:
-                self.feed.update(connected=True, lastHeartbeat=time.time(), availability=availability, failures=0, error=None)
+                self.feed.update(connected=True, lastHeartbeat=time.time(), availability=availability)
             if data is not None:
                 # Repeated clocks are safe: the server handles event idempotency.
                 # Sending paused snapshots keeps connection and feed freshness honest.
@@ -319,8 +323,14 @@ class App:
                 atomic_json(self.root / 'sessions.json', self.sessions)
                 with self.lock:
                     self.feed.update(sent=self.feed['sent'] + 1, lastSuccess=time.time(), gameState=accepted['state'])
+            with self.lock:
+                self.feed.update(failures=0, error=None)
             return 3
         except RemoteError as exc:
+            if exc.status == 413:
+                with self.lock:
+                    self.feed['connected'] = heartbeat_ok
+                return min(12, self._feed_size_failure())
             if exc.status == 409:
                 with self.lock:
                     self.feed.update(availability='conflict', error='Spieldaten abgelehnt. Ein neues BronzeBrawl-Spiel verbinden.')
@@ -339,6 +349,11 @@ class App:
             return min(12, self._feed_failure(exc))
         except (OSError, ValueError, KeyError, TypeError) as exc:
             return min(12, self._feed_failure(exc))
+
+    def _feed_size_failure(self):
+        return self._feed_failure(ReplayError(
+            'Live-Snapshot zu groß (HTTP 413). Größenlimit von Backend/Proxy prüfen; '
+            'erneuter Versuch automatisch mit frischen Daten.'))
 
     def _feed_failure(self, exc):
         with self.lock:

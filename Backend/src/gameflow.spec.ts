@@ -72,6 +72,125 @@ async function setup() {
   await service.chooseChampion({player:b.playerId,champion:champions[2].championId},b.playerToken);
 }
 beforeEach(()=>{db=new MemoryDB(); service=new Service(db as any);});
+describe('mystery chest foundation', () => {
+  async function supporter() {
+    const player = await service.createPlayer({ playerName: 'Support', game: game.gameId });
+    await service.joinTeam({ player: player.playerId, team: teams[0].teamId }, player.playerToken);
+    await service.chooseChampion({ player: player.playerId, champion: champions[1].championId }, player.playerToken);
+    return player;
+  }
+
+  test('one kill, two unique assists, and three deaths earn separate player-owned chests', async () => {
+    await setup();
+    const support = await supporter();
+    const events = [1, 2, 3].map(id => ({ ...kill(id), Assisters: ['Assist#EUW', 'Assist#EUW', 'Alice#EUW', 'Bob#EUW'] }));
+    await service.ingest({ gameId: game.gameId, input: feed(events) }, game.hostToken);
+    expect(db.all(Reward).filter(row => row.player.playerId === a.playerId).map(row => row.chestType)).toEqual(['standard', 'standard', 'standard']);
+    expect(db.all(Reward).filter(row => row.player.playerId === b.playerId).map(row => row.chestType)).toEqual(['revenge']);
+    const status = await service.status(support.playerId, support.playerToken);
+    expect(status.rewards.map(row => row.chestType)).toEqual(['support']);
+    expect(status.chestProgress.find(row => row.key === 'assists')).toMatchObject({ current: 1, target: 2 });
+    expect(status.chestProgress.find(row => row.key === 'kills')).toMatchObject({ current: 0, target: 1 });
+    service = new Service(db as any);
+    await service.ingest({ gameId: game.gameId, input: feed(events) }, game.hostToken);
+    expect(db.all(Reward)).toHaveLength(5);
+  });
+
+  test('all six objective events reward every joined teammate, including players without champions', async () => {
+    await setup();
+    const teammate = await service.createPlayer({ playerName: 'Waiting teammate', game: game.gameId });
+    await service.joinTeam({ player: teammate.playerId, team: teams[0].teamId }, teammate.playerToken);
+    const events = ['TurretKilled', 'HordeKill', 'HeraldKill', 'DragonKill', 'DragonKill', 'BaronKill'].map((EventName, i) => ({
+      EventID: i + 1, EventTime: i + 1, EventName, KillerName: 'Alice#EUW',
+      ...(EventName === 'DragonKill' ? { DragonType: i === 4 ? 'Elder' : 'Fire' } : {}),
+    }));
+    const input = feed(events);
+    await service.ingest({ gameId: game.gameId, input }, game.hostToken);
+    service = new Service(db as any);
+    await service.ingest({ gameId: game.gameId, input }, game.hostToken);
+    for (const player of [a, teammate]) {
+      const rewards = (await service.status(player.playerId, player.playerToken)).rewards;
+      expect(rewards.map(row => row.chestType)).toEqual(['turret', 'epic', 'epic', 'epic', 'legendary', 'legendary']);
+      expect(rewards.every(row => Number.isInteger(row.sourceEventId))).toBe(true);
+    }
+    expect((await service.status(b.playerId, b.playerToken)).rewards).toHaveLength(0);
+    expect(db.all(Reward)).toHaveLength(12);
+    const late = await service.createPlayer({ playerName: 'Late join', game: game.gameId });
+    await service.joinTeam({ player: late.playerId, team: teams[0].teamId }, late.playerToken);
+    await service.ingest({ gameId: game.gameId, input }, game.hostToken);
+    expect((await service.status(late.playerId, late.playerToken)).rewards).toHaveLength(0);
+  });
+
+  test('minion last-hit turret rewards the attacking team, not the destroyed tower team', async () => {
+    await setup();
+    await service.ingest({ gameId: game.gameId, input: feed([{
+      EventID: 1, EventName: 'TurretKilled', KillerName: 'Minion_T100', TurretKilled: 'Turret_T2_L_03_A',
+    }]) }, game.hostToken);
+    expect((await service.status(a.playerId, a.playerToken)).rewards[0].chestType).toBe('turret');
+    expect((await service.status(b.playerId, b.playerToken)).rewards).toHaveLength(0);
+  });
+
+  test('unknown objective ownership and injected reward failures roll back the entire event', async () => {
+    await setup();
+    const event = { EventID: 1, EventName: 'DragonKill', KillerName: 'Unknown', DragonType: 'Fire' };
+    await expect(service.ingest({ gameId: game.gameId, input: feed([event]) }, game.hostToken)).rejects.toMatchObject({ status: 400 });
+    expect(db.all(Event)).toHaveLength(0);
+    event.KillerName = 'Alice#EUW';
+    db.failOn = Reward;
+    await expect(service.ingest({ gameId: game.gameId, input: feed([event]) }, game.hostToken)).rejects.toThrow('injected');
+    expect(db.all(Event)).toHaveLength(0);
+    expect(db.all(Reward)).toHaveLength(0);
+    await service.ingest({ gameId: game.gameId, input: feed([event]) }, game.hostToken);
+    expect(db.all(Reward)).toHaveLength(1);
+  });
+
+  test('opening is authorized, durable and repeatable without consuming or changing the offer', async () => {
+    await setup();
+    await service.ingest({ gameId: game.gameId, input: feed([kill()]) }, game.hostToken);
+    const id = db.all(Reward)[0].rewardId;
+    await expect(service.openChest({ id }, b.playerToken)).rejects.toMatchObject({ status: 403 });
+    const first = await service.openChest({ id }, a.playerToken);
+    service = new Service(db as any);
+    expect(await service.openChest({ id }, a.playerToken)).toEqual(first);
+    expect(first).toMatchObject({ distributed: false, choices: [{ id: 'assign', effect: 'assign', amount: 9, unit: 'sips' }] });
+    expect(first.openedAt).toBeTruthy();
+    const request = { id, choiceId: 'assign', punishment: { recipient: { playerId: b.playerId }, amount: 99 } };
+    const attempts = await Promise.allSettled([service.confirmReward(request, a.playerToken), service.confirmReward(request, a.playerToken)]);
+    expect(attempts.filter(row => row.status === 'fulfilled')).toHaveLength(1);
+    expect(db.all(Punishment).filter(row => row.punishmentType === 0)).toHaveLength(1);
+    expect(db.all(Punishment).find(row => row.punishmentType === 0)).toMatchObject({ amount: 9, remainingAmount: 9, unit: 'sips' });
+    await expect(service.openChest({ id }, a.playerToken)).rejects.toMatchObject({ status: 409 });
+  });
+
+  test('unopened or invented choices cannot be submitted', async () => {
+    await setup();
+    await service.ingest({ gameId: game.gameId, input: feed([kill()]) }, game.hostToken);
+    const id = db.all(Reward)[0].rewardId;
+    const request = { id, choiceId: 'assign', punishment: { recipient: { playerId: b.playerId } } };
+    await expect(service.confirmReward(request, a.playerToken)).rejects.toMatchObject({ status: 400 });
+    await service.openChest({ id }, a.playerToken);
+    await expect(service.confirmReward({ ...request, choiceId: 'invented' }, a.playerToken)).rejects.toMatchObject({ status: 400 });
+  });
+
+  test('punishment counters decrement one unit, preserve amounts, reject replayed taps, and stop at zero', async () => {
+    await setup();
+    const player = db.all(Player).find(row => row.playerId === a.playerId);
+    for (const unit of ['sips', 'shots', 'chugs']) {
+      const item = await db.save(Punishment, { amount: 2, unit, player, recieved: false });
+      await expect(service.consumePunishment({ id: item.punishmentId, expectedRemaining: 2 }, b.playerToken)).rejects.toMatchObject({ status: 403 });
+      const tap = { id: item.punishmentId, expectedRemaining: 2 };
+      const attempts = await Promise.allSettled([service.consumePunishment(tap, a.playerToken), service.consumePunishment(tap, a.playerToken)]);
+      expect(attempts.filter(row => row.status === 'fulfilled')).toHaveLength(1);
+      const current = db.all(Punishment).find(row => row.punishmentId === item.punishmentId);
+      expect(current).toMatchObject({ amount: 2, remainingAmount: 1, recieved: false });
+      expect((await service.status(a.playerId, a.playerToken)).punishmentTotals[unit]).toBe(1);
+      await service.consumePunishment({ id: item.punishmentId, expectedRemaining: 1 }, a.playerToken);
+      await expect(service.consumePunishment({ id: item.punishmentId, expectedRemaining: 1 }, a.playerToken)).rejects.toMatchObject({ status: 409 });
+      expect((await service.status(a.playerId, a.playerToken)).punishmentTotals[unit]).toBe(0);
+    }
+  });
+
+});
 describe('gameflow contract',()=>{
   test('HTTP accepts and ingests a valid event history above 100 KiB with authorization and idempotency intact', async () => {
     const module = await Test.createTestingModule({

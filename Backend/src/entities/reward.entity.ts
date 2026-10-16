@@ -23,6 +23,18 @@ export class Reward {
   @Column({ default: false })
   distributed: boolean;
 
+  @Column({ default: 'standard' })
+  chestType: string;
+
+  @Column({ nullable: true })
+  openedAt: Date;
+
+  @Column({ type: 'jsonb', nullable: true })
+  choices: Array<{ id: string; effect: string; amount: number; unit: string }>;
+
+  @Column({ type: 'integer', nullable: true })
+  sourceEventId: number;
+
   @ManyToOne(() => Player, (player) => player.rewards)
   player: Player;
 

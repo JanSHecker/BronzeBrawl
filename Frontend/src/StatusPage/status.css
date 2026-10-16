@@ -1,0 +1,72 @@
+.app-shell:has(.game-status) { margin:0; min-height:100svh; justify-content:flex-start; background:#f1f5f9; }
+.game-status { --status-line:#64748b; width:100%; max-width:480px; min-height:100svh; padding:8px; padding-top:max(8px,env(safe-area-inset-top)); padding-bottom:max(8px,env(safe-area-inset-bottom)); display:flex; flex-direction:column; gap:8px; color:#17202b; background:#f1f5f9; font:14px/1.3 system-ui,sans-serif; }
+.game-status *, .status-popup * { box-sizing:border-box; }
+.game-status svg, .status-popup svg { width:24px; height:24px; flex-shrink:0; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+.game-status button, .status-popup button { font:inherit; color:inherit; cursor:pointer; touch-action:manipulation; -webkit-tap-highlight-color:transparent; }
+.game-status button:focus-visible, .status-popup button:focus-visible { outline:3px solid #2563eb; outline-offset:2px; }
+.game-status button:disabled, .status-popup button:disabled { cursor:default; opacity:.4; }
+.status-header { min-height:32px; display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.status-header h1 { display:flex; align-items:center; gap:6px; font-size:16px; font-weight:800; }
+.status-header h1 svg { width:21px; }
+.status-live { font-size:11px; text-align:right; }
+.status-panel { border:1px solid var(--status-line); border-radius:5px; background:#cbd5e1; }
+.status-match { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:8px; height:100px; }
+.status-player { display:grid; grid-template-columns:82px minmax(0,1fr); gap:6px; align-items:center; padding:8px; }
+.status-player img { width:82px; height:82px; object-fit:cover; border:1px solid #56697d; border-radius:3px; }
+.status-player p { font-size:10px; color:#475569; overflow-wrap:anywhere; }
+.status-player strong { font-size:12px; overflow-wrap:anywhere; }
+.status-player .status-kda { font-size:15px; font-weight:700; color:#17202b; font-variant-numeric:tabular-nums; margin-top:3px; white-space:nowrap; }
+.status-punishments { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; position:relative; }
+.status-punishment { display:grid; grid-template-columns:24px auto; grid-template-rows:1fr auto; align-items:center; justify-content:center; gap:0 9px; height:76px; padding:7px; border:1px solid var(--status-line); border-radius:5px; background:#cbd5e1; }
+.status-punishment svg { grid-row:1/3; color:#9a3412; }
+.status-punishment strong { font-size:25px; font-variant-numeric:tabular-nums; line-height:1; text-align:left; }
+.status-punishment span { font-size:11px; text-transform:capitalize; text-align:left; }
+.status-chests { padding:6px; }
+.status-section-heading { display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
+.status-section-heading h2 { font-size:13px; font-weight:700; }
+.status-section-heading > span { font-size:11px; color:#475569; }
+.status-inventory { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:4px; }
+.status-chest { display:flex; position:relative; flex-direction:column; align-items:center; justify-content:center; gap:3px; height:78px; min-width:0; padding:5px 1px; border:1px solid #78889c; border-radius:4px; background:#e2e8f0; }
+.status-chest svg { width:26px; height:26px; color:#475569; }
+.status-chest span { font-size:9px; }
+.status-chest strong { font-size:16px; line-height:1; }
+.status-chest-support svg { color:#7c3aed; }
+.status-chest-revenge svg { color:#b45309; }
+.status-chest-turret svg { color:#0369a1; }
+.status-chest-epic svg { color:#0f766e; }
+.status-chest-legendary svg { color:#a21caf; }
+.status-saved { position:absolute; top:4px; right:4px; width:5px; height:5px; border-radius:50%; background:#2563eb; }
+.status-progress { padding:7px 9px; }
+.status-progress-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); grid-auto-flow:column; grid-template-rows:repeat(3,1fr); gap:6px 12px; }
+.status-progress-label { display:grid; grid-template-columns:16px minmax(0,1fr) auto; gap:4px; align-items:center; min-height:23px; font-size:10px; line-height:1.15; margin-bottom:3px; }
+.status-progress-label svg { width:16px; height:16px; }
+.status-progress-label > span:last-child { font-variant-numeric:tabular-nums; }
+.status-track { height:4px; border-radius:2px; overflow:hidden; background:#acb9c9; }
+.status-track > span { display:block; height:100%; background:#475569; }
+.status-poll-error, .status-action-error { position:fixed; bottom:max(8px,env(safe-area-inset-bottom)); left:50%; transform:translateX(-50%); width:calc(100% - 16px); max-width:460px; border:1px solid #b91c1c; border-radius:5px; padding:8px; color:#7f1d1d; background:#fee2e2; font-size:12px; z-index:3; }
+.status-poll-error button { padding:4px 8px; text-decoration:underline; }
+.status-popup { --status-line:#64748b; width:calc(100% - 24px); max-width:400px; max-height:calc(100svh - 24px); padding:14px; margin:auto; border:1px solid #334155; border-radius:8px; color:#17202b; background:#f1f5f9; box-shadow:0 12px 45px #0005; }
+.status-popup::backdrop { background:#0f172a99; }
+.status-popup-heading { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; }
+.status-popup-heading h2 { display:flex; align-items:center; gap:7px; font-size:16px; font-weight:700; }
+.status-button { min-height:44px; padding:7px 12px; border:1px solid #64748b; border-radius:4px; background:#e2e8f0; display:flex; align-items:center; justify-content:center; gap:6px; }
+.status-popup .status-primary { width:100%; background:#334155; color:white; font-weight:600; }
+.status-chest-cover { height:104px; display:grid; place-items:center; }
+.status-chest-cover svg { width:76px; height:76px; }
+.status-popup-label { font-size:12px; margin:10px 0; }
+.status-choices { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:8px; }
+.status-choice { flex-direction:column; min-height:100px; }
+.status-choice strong { font-size:24px; }
+.status-choice span { font-size:12px; }
+.status-targets { display:grid; grid-template-columns:1fr 1fr; gap:7px; margin:10px 0; }
+.status-target { min-height:58px; text-align:left; justify-content:flex-start; }
+.status-target strong { display:block; font-size:12px; }
+.status-target small { display:block; font-size:10px; color:#475569; }
+.status-target[aria-pressed=true] { background:#dbeafe; outline:2px solid #2563eb; outline-offset:-2px; }
+.status-back { width:100%; margin-top:7px; background:transparent; }
+.status-chest-result { display:flex; align-items:center; flex-direction:column; gap:12px; padding:24px; }
+.status-chest-result svg { width:40px; height:40px; color:#15803d; }
+.status-popup-error { font-size:12px; color:#991b1b; margin-top:8px; }
+@media(max-width:379px) { .status-player { padding:6px; gap:5px; } .status-player .status-kda { font-size:13px; } }
+@media(max-width:359px) { .game-status { padding:6px; gap:6px; } .status-header { min-height:28px; } .status-match { height:90px; gap:6px; } .status-player { grid-template-columns:74px minmax(0,1fr); } .status-player img { width:74px; height:74px; } .status-punishment { height:72px; } .status-chest { height:76px; } .status-progress-grid { column-gap:8px; } }
+@media(max-height:540px) { .game-status { padding:5px; gap:5px; } .status-header { min-height:26px; } .status-match { height:76px; } .status-player { grid-template-columns:62px minmax(0,1fr); padding:6px; } .status-player img { width:62px; height:62px; } .status-punishment { height:64px; } .status-chest { height:70px; } .status-progress { padding:5px 8px; } .status-progress-grid { row-gap:4px; } }

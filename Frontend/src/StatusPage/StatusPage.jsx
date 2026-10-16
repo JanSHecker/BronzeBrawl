@@ -5,9 +5,12 @@ import { usePolling } from "../useRequest";
 import { GAME_VERSION_KEY, DEFAULT_GAME_VERSION } from "../constants";
 import processChampionName from "../nameAdjuster";
 import placeholder from "../Champion_Placeholder.png";
-import PunishmentDisplay from "./PunishmentDisplay";
-import RewardDisplay from "./RewardDisplay";
+import PunishmentCounters from './PunishmentCounters';
+import ChestInventory from './ChestInventory';
+import ChestProgress from './ChestProgress';
+import StatusIcon from './StatusIcon';
 import ChampionRotation from "./ChampionRotation";
+import './status.css';
 
 const StatusPage = () => {
   const navigate = useNavigate();
@@ -27,20 +30,23 @@ const StatusPage = () => {
   };
   const { error, retry, refresh } = usePolling(fetchStatus);
   const version = localStorage.getItem(GAME_VERSION_KEY) || DEFAULT_GAME_VERSION;
-  return <div className="flex flex-col justify-start gap-2 min-h-screen">
-    {error && <p role="alert">{error} <button onClick={retry}>Retry</button></p>}
+  return <div className="game-status">
+    <header className="status-header"><h1><StatusIcon name="kills" />BronzeBrawl</h1>
+      {status && <p role="status" className="status-live">{status.gameState === 'ended' ? 'Game ended' : status.feedStale ? 'Waiting for data…' : 'Live'}</p>}
+    </header>
+    {error && <p className="status-poll-error" role="alert">{error} <button onClick={retry}>Retry</button></p>}
     {!status ? <p>Loading game status…</p> : <>
-      <p role="status">{status.gameState === "ended" ? "Game ended" : status.feedStale ? "Waiting for fresh game data…" : "Live"}</p>
-      <div className="grid grid-cols-2 gap-2">
-        <div className="flex flex-col text-center justify-center bg-slate-300 border border-black rounded p-1">
+      <div className="status-match">
+        <div className="status-panel status-player">
           <img src={`https://static.bigbrain.gg/assets/lol/riot_static/${version}/img/champion/${processChampionName(status.champion.championName)}.png`}
             onError={event => { event.currentTarget.onerror = null; event.currentTarget.src = placeholder; }} alt={status.champion.championName} />
-          <h1>{status.kda.join("/")}</h1>
+          <div><p>{status.player?.playerName}</p><strong>{status.champion.championName}</strong><p className="status-kda" aria-label={`${status.kda[0]} kills, ${status.kda[1]} deaths, ${status.kda[2]} assists`}>{status.kda.join("/")}</p></div>
         </div>
         <ChampionRotation changeCounter={status.counter} rotationMode={status.rotationMode} navigate={navigate} ended={status.gameState === "ended"} />
       </div>
-      <PunishmentDisplay punishmentStack={status.punishments.filter(item => !item.recieved)} onSuccess={retry} />
-      <RewardDisplay rewardStack={status.rewards.filter(item => !item.distributed)} enemyTeam={status.enemyTeam} onRefresh={refresh} />
+      <PunishmentCounters punishments={status.punishments} onRefresh={refresh} />
+      <ChestInventory rewards={status.rewards} enemyTeam={status.enemyTeam} onRefresh={refresh} />
+      <ChestProgress progress={status.chestProgress} />
     </>}
   </div>;
 };

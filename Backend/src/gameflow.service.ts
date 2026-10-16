@@ -10,6 +10,7 @@ import { Event } from './entities/event.entity';
 import { Takedown } from './entities/takedown.entity';
 import { Reward } from './entities/reward.entity';
 import { Punishment } from './entities/punishment.entity';
+import { CHEST_MILESTONES, ChestProgressKey, objectiveMilestone } from './chests';
 
 export class GameflowError extends HttpException {
   constructor(message: string, status: HttpStatus | number) {
@@ -204,6 +205,10 @@ export class GameflowService {
       rewardType: reward.rewardType,
       distributed: Boolean(reward.distributed),
       player: this.publicPlayer(reward.player),
+      chestType: reward.chestType || 'standard',
+      openedAt: reward.openedAt || null,
+      choices: reward.choices || null,
+      sourceEventId: reward.sourceEventId || null,
     };
   }
 
@@ -211,6 +216,8 @@ export class GameflowService {
     return {
       punishmentId: punishment.punishmentId,
       amount: punishment.amount,
+      remainingAmount: this.remainingPunishment(punishment),
+      unit: punishment.unit || 'sips',
       punishmentType: punishment.punishmentType,
       recieved: Boolean(punishment.recieved),
       player: this.publicPlayer(punishment.player),
@@ -382,6 +389,9 @@ export class GameflowService {
         || raw.Assisters.some((name: any) => typeof name !== 'string' || !name.trim()))) {
         this.fail('invalid event assisters');
       }
+      if (objectiveMilestone(raw) && (typeof raw.KillerName !== 'string' || !raw.KillerName.trim())) {
+        this.fail('invalid objective killer');
+      }
       if (raw.EventName === 'ChampionKill'
         && (typeof raw.KillerName !== 'string' || !raw.KillerName.trim()
           || typeof raw.VictimName !== 'string' || !raw.VictimName.trim())) {
@@ -451,6 +461,42 @@ export class GameflowService {
   private async playerForChampion(champion: any, players: any[]): Promise<any | null> {
     if (!champion) return null;
     return players.find((player) => this.championId(player.champion) === champion?.championId) || null;
+  }
+
+  private remainingPunishment(punishment: any): number {
+    return punishment.recieved ? 0 : Math.max(0, Number(punishment.remainingAmount ?? punishment.amount));
+  }
+
+  private async advanceChest(player: any, key: ChestProgressKey, game: any, event: any, store: Store): Promise<any | null> {
+    const milestone = CHEST_MILESTONES[key];
+    const progress = { ...(player.chestProgress || {}) };
+    progress[key] = Number(progress[key] || 0) + 1;
+    let chest = null;
+    if (progress[key] >= milestone.target) {
+      progress[key] -= milestone.target;
+      chest = await this.save(Reward, {
+        amount: game.rewardAmount, rewardType: 1, distributed: false, player,
+        chestType: milestone.type, sourceEventId: event.eventId, openedAt: null, choices: null,
+      }, store);
+    }
+    player.chestProgress = progress;
+    await this.save(Player, player, store);
+    return chest;
+  }
+
+  private async rewardObjective(raw: any, key: ChestProgressKey, champions: any[], players: any[], game: any, event: any, store: Store): Promise<void> {
+    const killer = await this.findChampionForName(raw.KillerName, champions);
+    let winningTeam = killer?.team?.teamName;
+    // Towers may be last-hit by minions. The destroyed tower identifies the
+    // defending side; never guess an objective's team from a player name.
+    if (winningTeam === undefined && raw.EventName === 'TurretKilled' && this.environmentKiller(raw.KillerName)) {
+      const towerTeam = /^Turret_T([12])(?:00)?_/i.exec(raw.TurretKilled || '');
+      if (towerTeam) winningTeam = towerTeam[1] === '1' ? 1 : 0;
+    }
+    if (winningTeam !== 0 && winningTeam !== 1) this.fail('unknown objective team');
+    for (const player of players.filter(row => row.team?.teamName === winningTeam)) {
+      await this.advanceChest(player, key, game, event, store);
+    }
   }
 
   async ingest(request: { gameId: any; input: any }, hostToken: string): Promise<any> {
@@ -524,6 +570,11 @@ export class GameflowService {
           game.state = 'ended';
           continue;
         }
+        const objective = objectiveMilestone(raw);
+        if (objective) {
+          await this.rewardObjective(raw, objective, champions, players, game, event, store);
+          continue;
+        }
         if (raw.EventName !== 'ChampionKill') continue;
         const victim = await this.findChampionForName(raw.VictimName, champions);
         if (!victim) this.fail('unknown event victim');
@@ -550,17 +601,21 @@ export class GameflowService {
           victimPlayer.deathCounter = Math.max(0, Number(victimPlayer.deathCounter || 0) - 1);
           await this.save(Player, victimPlayer, store);
           const punishment = await this.save(Punishment, {
-            amount: game.punishmentAmount, punishmentType: 1, player: victimPlayer, takedown,
+            amount: game.punishmentAmount, remainingAmount: game.punishmentAmount, unit: 'sips',
+            punishmentType: 1, player: victimPlayer, takedown,
           }, store);
           takedown.punishment = punishment;
+          await this.advanceChest(victimPlayer, 'revenge', game, event, store);
         }
         if (killerPlayer) {
           killerPlayer.killCounter = Math.max(0, Number(killerPlayer.killCounter || 0) - 1);
           await this.save(Player, killerPlayer, store);
-          const reward = await this.save(Reward, {
-            amount: game.rewardAmount, rewardType: 1, distributed: false, player: killerPlayer, takedown,
-          }, store);
+          const reward = await this.advanceChest(killerPlayer, 'kills', game, event, store);
           takedown.reward = reward;
+        }
+        for (const assister of assistors) {
+          const player = await this.playerForChampion(assister, players);
+          if (player) await this.advanceChest(player, 'assists', game, event, store);
         }
         // Persist both sides of the one-to-one links. This makes a restart or
         // repository reload return the same event consequences, rather than
@@ -593,7 +648,8 @@ export class GameflowService {
       const rawToken = this.token();
       const player = await this.save(Player, {
         playerName: input.playerName.trim(), game, team: null, champion: null,
-        killCounter: 0, deathCounter: 0, playerTokenHash: this.hash(rawToken),
+        killCounter: 0, deathCounter: 0, chestProgress: {},
+        playerTokenHash: this.hash(rawToken),
       }, store);
       return {
         playerId: player.playerId,
@@ -735,8 +791,15 @@ export class GameflowService {
     const rewards = (await this.rows(Reward, this.database, ['player', 'takedown'])).filter((row) => this.playerId(row.player) === player.playerId);
     const feedAt = game.lastFeedAt ? new Date(game.lastFeedAt).getTime() : 0;
     return {
+      player: this.publicPlayer(player),
       punishments: punishments.map((punishment) => this.publicPunishment(punishment)),
       rewards: rewards.map((reward) => this.publicReward(reward)),
+      chestProgress: Object.entries(CHEST_MILESTONES).map(([key, milestone]) => ({
+        key, chestType: milestone.type, current: Number(player.chestProgress?.[key] || 0), target: milestone.target,
+      })),
+      punishmentTotals: Object.fromEntries(['sips', 'shots', 'chugs'].map(unit => [unit,
+        punishments.filter(row => (row.unit || 'sips') === unit).reduce((total, row) => total + this.remainingPunishment(row), 0),
+      ])),
       counter: [Number(player.killCounter || 0), Number(player.deathCounter || 0)],
       kda: champion ? await this.kda(champion.championId) : [0, 0, 0],
       enemyTeam: enemy ? (await this.rows(Champion, this.database, ['team', 'team.game', 'player'])).filter((row) => this.teamId(row.team) === enemy.teamId).map((row) => this.publicChampion(row)) : [],
@@ -778,6 +841,11 @@ export class GameflowService {
       // principal's capability.
       const owner = await this.authorizePlayer(this.playerId(reward.player), token, store);
       if (reward.distributed) this.fail('reward already consumed', HttpStatus.CONFLICT);
+      if (request?.choiceId !== undefined) {
+        if (!reward.openedAt || !reward.choices?.some(choice => choice.id === request.choiceId && choice.effect === 'assign')) {
+          this.fail('invalid chest choice');
+        }
+      }
       const game = await this.getGameOrFail(owner.game, store);
       const recipientId = this.id(request?.punishment?.recipient?.playerId, 'recipient');
       const recipient = await this.getPlayerOrFail(recipientId, store);
@@ -787,12 +855,54 @@ export class GameflowService {
         // A distributed reward always creates the server-defined distributed
         // punishment. Amount comes from the persisted reward (created from
         // Game.rewardAmount); distributor comes from the authenticated owner.
-        amount: reward.amount, punishmentType: 0, recieved: false, distributor: owner, player: recipient,
+        amount: reward.amount, remainingAmount: reward.amount, unit: 'sips',
+        punishmentType: 0, recieved: false, distributor: owner, player: recipient,
       }, store);
       reward.distributed = true;
       await this.save(Reward, reward, store);
       return this.publicPunishment(punishment);
     });
+  }
+
+  async openChest(request: any, token: string): Promise<any> {
+    const id = this.id(request?.id, 'rewardId');
+    return this.transaction(async store => {
+      let reward = await this.findOne(Reward, row => row.rewardId === id, store, ['player']);
+      if (!reward) this.fail('reward not found', HttpStatus.NOT_FOUND);
+      const preview = await this.getPlayerOrFail(this.playerId(reward.player), store);
+      await this.lockGame(store, this.gameId(preview.game));
+      reward = await this.findOne(Reward, row => row.rewardId === id, store, ['player']);
+      if (!reward) this.fail('reward not found', HttpStatus.NOT_FOUND);
+      await this.authorizePlayer(this.playerId(reward.player), token, store);
+      if (reward.distributed) this.fail('reward already consumed', HttpStatus.CONFLICT);
+      if (!reward.openedAt) {
+        reward.openedAt = new Date();
+        // Foundation only: preserve the existing reward effect. No random
+        // content catalog or mockup-only split choices enter the real game.
+        reward.choices = [{ id: 'assign', effect: 'assign', amount: reward.amount, unit: 'sips' }];
+        await this.save(Reward, reward, store);
+      }
+      return this.publicReward(reward);
+    });
+  }
+
+  async consumePunishment(request: any, token: string): Promise<any> {
+    const id = this.id(request?.id, 'punishmentId');
+    const expectedRemaining = this.id(request?.expectedRemaining, 'expectedRemaining');
+    const existing = await this.findOne(Punishment, row => row.punishmentId === id, this.database, ['player']);
+    if (!existing) this.fail('punishment not found', HttpStatus.NOT_FOUND);
+    const owner = await this.getPlayerOrFail(this.playerId(existing.player));
+    return this.transaction(async store => {
+      const punishment = await this.findOne(Punishment, row => row.punishmentId === id, store, ['player']);
+      if (!punishment) this.fail('punishment not found', HttpStatus.NOT_FOUND);
+      await this.authorizePlayer(this.playerId(punishment.player), token, store);
+      const remaining = this.remainingPunishment(punishment);
+      if (!remaining || remaining !== expectedRemaining) this.fail('punishment changed; refresh before retrying', HttpStatus.CONFLICT);
+      punishment.remainingAmount = remaining - 1;
+      punishment.recieved = punishment.remainingAmount === 0;
+      await this.save(Punishment, punishment, store);
+      return this.publicPunishment(punishment);
+    }, this.gameId(owner.game));
   }
 
   async confirmPunishment(request: any, token: string): Promise<any> {
@@ -808,6 +918,7 @@ export class GameflowService {
       if (!punishment) this.fail('punishment not found', HttpStatus.NOT_FOUND);
       const player = await this.authorizePlayer(this.playerId(punishment.player), token, store);
       punishment.recieved = true;
+      punishment.remainingAmount = 0;
       await this.save(Punishment, punishment, store);
       return this.publicPunishment(punishment);
     }, gameId);

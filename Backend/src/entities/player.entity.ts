@@ -27,6 +27,9 @@ export class Player {
   @Column({ default: 0 })
   deathCounter: number;
 
+  @Column({ type: 'jsonb', default: {} })
+  chestProgress: Record<string, number>;
+
   @Column({ nullable: true })
   playerTokenHash: string;
 

@@ -50,6 +50,44 @@ hinterlegt werden. Für ein neues BronzeBrawl-Spiel ebenfalls einen neuen Code
 verwenden. Ein Spielwechsel oder Zurückspulen wird nicht als dasselbe Spiel
 weitergesendet; der Verbindungsstatus meldet den Konflikt.
 
+## Live-Daten für spätere Tests aufzeichnen
+
+Jeder erfolgreiche Abruf der lokalen LoL-API wird automatisch als vollständige
+JSON-Datei gespeichert — unabhängig davon, ob der Server die Daten annimmt.
+Auch identische Snapshots bei pausierter Spielzeit, Spielwechsel und unvollständige
+JSON-Antworten bleiben erhalten. Fehlgeschlagene Abrufe ohne JSON-Antwort erzeugen
+keine Datei. Das gilt für den Direkt-Feed und den alten Browser-Relay-Modus.
+
+Jeder Companion-Start erhält einen eigenen Ordner unter:
+
+```text
+%LOCALAPPDATA%\BronzeBrawl\companion\captures\<UTC-Startzeit>-<Zufallskennung>\
+  run.json
+  snapshot-00000001-<UTC-Abrufzeit>.json
+  snapshot-00000002-<UTC-Abrufzeit>.json
+```
+
+Der Ordner wird erst beim ersten erfolgreichen Abruf angelegt. Neustarts erzeugen
+neue Ordner; Stoppen/Starten des Feeds oder erneutes Verbinden innerhalb desselben
+Companion-Laufs verwendet denselben Ordner. Ein Lauf kann daher mehrere Spiele
+enthalten. Dateinamen sind nach Abrufreihenfolge nummeriert; `run.json` enthält
+Startzeit und Quell-URL. Snapshots enthalten direkt das unveränderte JSON-Objekt
+der API, ohne zusätzlichen Wrapper, und lassen sich später als Backend-`input`
+verwenden. Es werden keine Ereignisse rekonstruiert oder synthetische Daten erzeugt.
+
+Der Speicherort erscheint beim Terminal-Start. **`t`** zeigt zusätzlich die Zahl
+lokal gespeicherter Snapshots. Schreibfehler werden separat gemeldet und beim
+nächsten Abruf erneut versucht; der Versand läuft weiter. Dateien werden atomar
+geschrieben, damit fertige JSON-Dateien nicht halb geschrieben sichtbar werden.
+
+**Datenschutz und Speicherplatz:** Aufzeichnungen enthalten Spielernamen und alle
+weiteren von der Live-API gelieferten Felder. Companion-Verbindungsschlüssel,
+HTTP-Header und LoL-Client-Zugangsdaten werden nicht hinzugefügt. Vor Weitergabe
+oder Aufnahme ins Repository prüfen und gegebenenfalls anonymisieren. Die Dateien
+bleiben lokal, werden nicht automatisch hochgeladen oder gelöscht und können bei
+langen Sitzungen viel Speicher beanspruchen. Nicht mehr benötigte Laufordner bei
+beendetem Companion manuell entfernen.
+
 ## Lokale Befehle
 
 - **`r`** sucht **fremde Summoner’s-Rift-Replays (Karte 11)** über die öffentliche

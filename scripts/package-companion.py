@@ -4,7 +4,7 @@ from zipfile import ZipFile, ZIP_DEFLATED
 
 ROOT = Path(__file__).resolve().parents[1]
 FILES = ('README.md', 'start.cmd', 'companion.py', 'network.py', 'replay.py',
-         'ranking.py', 'index.html', 'ui.js', 'style.css')
+         'ranking.py', 'capture.py', 'index.html', 'ui.js', 'style.css')
 
 if __name__ == '__main__':
     destination = ROOT / 'Frontend/src/public/downloads/bronze-brawl-companion.zip'

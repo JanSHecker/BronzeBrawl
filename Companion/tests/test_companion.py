@@ -226,6 +226,137 @@ class DirectFeedTests(unittest.TestCase):
         self.assertTrue(self.net.calls[-1][1].endswith('/heartbeat'))
 
 
+class LiveCaptureTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.net = DirectNetwork()
+        self.app = App(self.tmp.name, network=self.net)
+        self.app.connect_code(connection_code())
+
+    def tearDown(self):
+        self.app.close(); self.tmp.cleanup()
+
+    def snapshots(self, app=None):
+        return sorted((app or self.app).recording.directory.glob('snapshot-*.json'))
+
+    def test_each_fetch_preserves_the_full_payload_even_when_paused(self):
+        self.net.data['events']['Events'] = [{
+            'EventID': 12, 'EventName': 'HordeKill', 'EventTime': 9.125,
+            'KillerName': 'Tést#EUW', 'Assisters': ['Support#EUW'], 'unknownFutureField': {'value': 3},
+        }]
+        original = json.loads(json.dumps(self.net.data))
+        self.app.feed_tick(); self.app.feed_tick()
+        files = self.snapshots()
+        self.assertEqual(len(files), 2)
+        self.assertTrue(files[0].name.startswith('snapshot-00000001-'))
+        self.assertTrue(files[1].name.startswith('snapshot-00000002-'))
+        for file in files:
+            self.assertEqual(json.loads(file.read_text(encoding='utf-8')), original)
+        self.net.data['gameData']['gameTime'] = 11
+        self.net.data['events']['Events'].clear()
+        self.app.feed_tick()
+        self.assertEqual(json.loads(files[0].read_text(encoding='utf-8')), original)
+        self.assertEqual(self.app.status()['recording']['saved'], 3)
+        self.assertIsNone(self.app.status()['recording']['error'])
+        manifest = json.loads((self.app.recording.directory / 'run.json').read_text(encoding='utf-8'))
+        self.assertEqual(manifest['schemaVersion'], 1)
+        self.assertEqual(manifest['source'], 'https://127.0.0.1:2999/liveclientdata/allgamedata')
+        self.assertEqual(manifest['snapshotPattern'], 'snapshot-*.json')
+        self.assertEqual(list(self.app.recording.directory.glob('.state-*')), [])
+        for file in self.app.recording.directory.glob('*.json'):
+            self.assertNotIn('a' * 64, file.read_text(encoding='utf-8'))
+            self.assertNotIn('backendUrl', file.read_text(encoding='utf-8'))
+
+    def test_backend_rejection_and_source_conflicts_still_leave_captures(self):
+        self.net.input_fail = 400
+        self.app.feed_tick()
+        self.assertEqual(len(self.snapshots()), 1)
+        self.assertEqual(self.app.feed['sent'], 0)
+        self.assertFalse(self.app.feed['enabled'])
+        self.net.input_fail = None
+        self.app.feed_start(); self.app.feed_tick()
+        self.net.data['gameData']['gameTime'] = 0
+        self.app.feed_tick()
+        self.assertEqual(len(self.snapshots()), 3)
+        self.assertEqual(self.app.feed['availability'], 'conflict')
+        self.assertEqual(json.loads(self.snapshots()[-1].read_text())['gameData']['gameTime'], 0)
+
+    def test_unavailable_client_creates_no_empty_run_but_incomplete_json_is_retained(self):
+        self.net.unavailable = True
+        self.app.feed_tick()
+        self.assertFalse(self.app.recording.directory.exists())
+        self.net.unavailable = False
+        self.net.data = {'unexpected': 'incomplete client response'}
+        self.app.feed_tick()
+        self.assertEqual(json.loads(self.snapshots()[0].read_text()), self.net.data)
+        self.assertEqual(self.app.feed['sent'], 0)
+
+    def test_restart_uses_a_new_folder_without_overwriting_previous_run(self):
+        self.app.feed_tick()
+        previous_file = self.snapshots()[0]
+        previous_data = previous_file.read_bytes()
+        restored = App(self.tmp.name, network=self.net)
+        try:
+            self.assertNotEqual(restored.recording.directory, self.app.recording.directory)
+            restored.feed_tick()
+            self.assertEqual(len(self.snapshots(restored)), 1)
+            self.assertTrue(self.snapshots(restored)[0].name.startswith('snapshot-00000001-'))
+            self.assertEqual(previous_file.read_bytes(), previous_data)
+        finally:
+            restored.close()
+
+    def test_disk_failure_does_not_stop_delivery_and_recording_retries(self):
+        blocked = Path(self.tmp.name) / 'captures'
+        blocked.write_text('not a directory')
+        self.app.feed_tick()
+        self.assertEqual(self.app.feed['sent'], 1)
+        self.assertTrue(self.app.feed['connected'])
+        self.assertIsNone(self.app.feed['error'])
+        self.assertEqual(self.app.recording.status()['saved'], 0)
+        self.assertIn('Live-Aufzeichnung fehlgeschlagen', self.app.recording.status()['error'])
+        blocked.unlink()
+        self.app.feed_tick()
+        self.assertEqual(self.app.feed['sent'], 2)
+        self.assertEqual(len(self.snapshots()), 1)
+        self.assertTrue(self.snapshots()[0].name.startswith('snapshot-00000002-'))
+        self.assertIsNone(self.app.recording.status()['error'])
+
+    def test_concurrent_shared_fetches_have_unique_complete_files(self):
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(lambda _: self.app.live_data(), range(12)))
+        self.assertEqual(len(results), 12)
+        self.assertEqual(len(self.snapshots()), 12)
+        self.assertEqual(self.app.recording.status()['saved'], 12)
+        for index, file in enumerate(self.snapshots(), 1):
+            self.assertTrue(file.name.startswith(f'snapshot-{index:08d}-'))
+            self.assertEqual(json.loads(file.read_text()), self.net.data)
+
+    def test_legacy_sender_records_fetches_that_it_skips_at_an_unchanged_clock(self):
+        legacy = App(Path(self.tmp.name) / 'legacy', network=FakeNetwork())
+        try:
+            legacy.configure({'gameId': 8, 'hostToken': 'HOST_SECRET'})
+            legacy.feed_tick(); legacy.feed_tick()
+            self.assertEqual(legacy.feed['sent'], 1)
+            self.assertEqual(len(self.snapshots(legacy)), 2)
+        finally:
+            legacy.close()
+
+    def test_terminal_prints_capture_location_count_and_independent_warning(self):
+        (Path(self.tmp.name) / 'captures').write_text('not a directory')
+        self.app.feed_tick()
+        commands = iter(('t', 'q'))
+        output = []
+        with patch.object(self.app, 'start_workers'), \
+             patch.object(self.app, 'rank_replays', return_value=self.app.rankings()):
+            run_terminal(self.app, input_fn=lambda prompt: next(commands), output_fn=output.append)
+        text = '\n'.join(output)
+        self.assertIn(str(self.app.recording.directory), text)
+        self.assertIn('Lokal gespeicherte Snapshots: 0', text)
+        self.assertIn('Live-Aufzeichnung fehlgeschlagen', text)
+        self.assertNotIn('a' * 64, text)
+
+
 class DirectHTTPTests(unittest.TestCase):
     def test_real_http_sender_needs_no_browser_or_local_feed_server(self):
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -725,6 +856,9 @@ class PassiveFeedTests(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(json.loads(raw), self.app.network.data)
         self.assertEqual(headers['Access-Control-Allow-Origin'], 'https://bronze-brawl.de')
+        snapshots = list(self.app.recording.directory.glob('snapshot-*.json'))
+        self.assertEqual(len(snapshots), 1)
+        self.assertEqual(json.loads(snapshots[0].read_text()), self.app.network.data)
 
     def test_no_ui_management_or_write_api_is_exposed(self):
         for path in ('/', '/api/bootstrap', '/api/status'):

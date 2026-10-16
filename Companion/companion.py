@@ -19,6 +19,7 @@ import webbrowser
 from network import MAX_FILE, Network, RemoteError, validate_backend
 from replay import Cache, DiscoveryHistory, LCU, ReplayError, atomic_json, match_id, patch_of, version
 from ranking import RANKING_VERSION, sort_rankings, valid_ranking
+from capture import LiveCapture
 
 DEFAULT_BACKEND = 'https://bronze-brawl.de/api'
 PUBLIC_ORIGINS = frozenset(('https://bronze-brawl.de', 'https://bronze-brawl.janhec.de',
@@ -91,6 +92,7 @@ class App:
         self.cache = Cache(self.root / 'cache')
         self.token = secrets.token_urlsafe(32)
         self.lock = threading.RLock(); self.feed_lock = threading.Lock(); self.replay_lock = threading.Lock()
+        self.recording = LiveCapture(self.root)
         self.stop_event = threading.Event(); self.feed_wake = threading.Event(); self.refill_wake = threading.Event()
         self.backend = DEFAULT_BACKEND; self.pool_token = ''; self.host_token = ''; self.companion_token = ''; self.game_id = None
         self.league_dir = ''; self.target = 5; self.refill_enabled = False; self.workers = []
@@ -193,7 +195,8 @@ class App:
     def status(self):
         with self.lock:
             return {'poolPaired': bool(self.pool_token), 'gamePaired': bool(self.game_id and (self.host_token or self.companion_token)),
-                    'feed': dict(self.feed), 'refill': dict(self.refill), 'jobs': [dict(j) for j in self.jobs.values()],
+                    'feed': dict(self.feed), 'recording': self.recording.status(),
+                    'refill': dict(self.refill), 'jobs': [dict(j) for j in self.jobs.values()],
                     'localItems': self.cache.items(), 'candidates': list(self.candidates),
                     'replayFormat': 'RIOT/ROFL1 unterstützt; ROFL2/RLR derzeit ausdrücklich nicht unterstützt',
                     'replayLiveData': 'Unbewiesen: Ein gestartetes Replay garantiert keine Liveclient-Daten. Keine Ereignisrekonstruktion.'}
@@ -205,6 +208,9 @@ class App:
             with self.lock:
                 self.feed['availability'] = 'nicht verfügbar (LoL/Replay stellt keine Liveclient-Daten bereit)'
             raise LiveUnavailable('Live-Daten sind noch nicht verfügbar. Warte auf ein laufendes Spiel.') from None
+        # Capture at the shared fetch boundary, before validation, session checks
+        # or backend delivery can reject a snapshot needed for diagnostics.
+        self.recording.save(data)
         if not isinstance(data, dict) or not isinstance(data.get('gameData'), dict) or not isinstance(data.get('allPlayers'), list):
             raise ReplayError('LoL liefert keine unterstützten Live-Daten.')
         with self.lock:
@@ -902,6 +908,7 @@ def run_terminal(app, input_fn=None, output_fn=None, port=3002, code_input_fn=No
     code_input_fn = getpass.getpass if code_input_fn is None else code_input_fn
     output_fn('BronzeBrawl Companion')
     output_fn('Direkt-Feed: Companion → HTTPS → BronzeBrawl. Kein lokaler Webserver erforderlich.')
+    output_fn(f'Lokale Live-Aufzeichnungen: {app.recording.directory} (enthält Spielernamen; nicht ungeprüft teilen).')
     output_fn(TERMINAL_HELP)
     output_fn(SORT_HELP)
     display_lock = threading.RLock()
@@ -910,6 +917,9 @@ def run_terminal(app, input_fn=None, output_fn=None, port=3002, code_input_fn=No
         nonlocal last_status
         with display_lock:
             message = connection_status(app.feed if feed is None else feed)
+            recording = app.recording.status()
+            if recording['error']:
+                message += ' ' + recording['error']
             if message != last_status:
                 output_fn(message)
                 last_status = message
@@ -941,6 +951,10 @@ def run_terminal(app, input_fn=None, output_fn=None, port=3002, code_input_fn=No
                     with display_lock:
                         output_fn(connection_status(app.feed))
                         output_fn(f"Erfolgreich gesendete Snapshots: {app.feed['sent']}")
+                        recording = app.recording.status()
+                        output_fn(f"Lokal gespeicherte Snapshots: {recording['saved']} — {recording['directory']}")
+                        if recording['error']:
+                            output_fn(recording['error'])
                 elif command in ('r', 'replays'):
                     output_fn('Suche fremde Summoner’s-Rift-Replays über die Rangliste deiner Region. Patch wird automatisch erkannt ...')
                     result = app.fetch_replays()

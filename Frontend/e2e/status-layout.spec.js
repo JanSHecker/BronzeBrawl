@@ -22,15 +22,22 @@ for (const [width, height] of [[320, 480], [320, 568], [360, 640], [390, 844]]) 
       const name = new URL(route.request().url()).pathname.split('/').pop();
       if (name === 'openChest') {
         chest.openedAt = new Date().toISOString();
-        chest.choices = [{ id: 'assign', effect: 'assign', amount: 2, unit: 'sips' }];
-      } else if (name === 'confirmReward') chest.distributed = true;
+        chest.choices = [{ id: 'marked', name: 'Marked', mode: 'single', amounts: { sips: 2, shots: 0, chugs: 0 } }, { id: 'shield', name: 'Shield', mode: 'self', amounts: {}, shieldPoints: 2 }];
+      } else if (name === 'chooseReward') {
+        chest.distribution = { choiceId: 'marked', remaining: { sips: 2, shots: 0, chugs: 0 }, targets: {}, version: 0, outcome: 'success' };
+      } else if (name === 'distributeReward') {
+        chest.distribution.remaining.sips--;
+        chest.distribution.version++;
+        chest.distribution.targets = { 2: { sips: chest.distribution.version, shots: 0, chugs: 0 } };
+        chest.distributed = chest.distribution.remaining.sips === 0;
+      }
       else if (name === 'consumePunishment') {
         const body = route.request().postDataJSON();
         expect(body).toEqual({ id: 8, expectedRemaining: punishment.remainingAmount });
         punishment.remainingAmount--;
         punishment.recieved = punishment.remainingAmount === 0;
       }
-      await route.fulfill({ json: name === 'Status' ? status : name === 'openChest' ? chest : {} });
+      await route.fulfill({ json: name === 'Status' ? status : ['openChest', 'chooseReward', 'distributeReward'].includes(name) ? chest : {} });
     });
     await page.goto('/status');
     await expect(page.getByText('8/5/12', { exact: true })).toBeVisible();
@@ -54,9 +61,11 @@ for (const [width, height] of [[320, 480], [320, 568], [360, 640], [390, 844]]) 
     await page.getByRole('button', { name: 'Close chest' }).click();
     await page.reload();
     await page.getByRole('button', { name: 'Grubs / Herald / Dragon chest, 1 available' }).click();
-    await page.getByRole('button', { name: '2 Assign sips' }).click();
-    await page.getByRole('button', { name: 'Sam Garen' }).click();
-    await page.getByRole('button', { name: 'Confirm', exact: true }).click();
+    await page.getByRole('button', { name: 'Marked', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Confirm', exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Give 1 sips to Sam. Shield 0.' }).click();
+    await page.getByRole('button', { name: 'Give 1 sips to Sam. Shield 0.' }).click();
+    await expect(page.getByText('Complete', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Done', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Grubs / Herald / Dragon chest, 0 available' })).toBeDisabled();
     await fits();

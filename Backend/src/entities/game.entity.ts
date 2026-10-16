@@ -17,6 +17,9 @@ export class Game {
   @Column()
   rewardAmount: number;
 
+  @Column({ default: 'baseline' })
+  difficulty: string;
+
   @Column({ default: 'waiting_for_feed' })
   state: string;
 
@@ -32,7 +35,7 @@ export class Game {
   @Column({ nullable: true })
   companionAvailability: string;
 
-  @Column({ nullable: true })
+  @Column({ type: 'double precision', nullable: true })
   lastGameTime: number;
 
   @Column({ nullable: true })

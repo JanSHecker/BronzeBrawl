@@ -11,6 +11,7 @@ from pathlib import Path
 import queue
 import secrets
 import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -20,6 +21,7 @@ from network import MAX_FILE, Network, RemoteError, validate_backend
 from replay import Cache, DiscoveryHistory, LCU, ReplayError, atomic_json, match_id, patch_of, version
 from ranking import RANKING_VERSION, sort_rankings, valid_ranking
 from capture import LiveCapture
+from timeline import base_champion, enrich_snapshot, matches_source, player_identity, valid_source
 
 DEFAULT_BACKEND = 'https://bronze-brawl.de/api'
 PUBLIC_ORIGINS = frozenset(('https://bronze-brawl.de', 'https://bronze-brawl.janhec.de',
@@ -93,11 +95,13 @@ class App:
         self.token = secrets.token_urlsafe(32)
         self.lock = threading.RLock(); self.feed_lock = threading.Lock(); self.replay_lock = threading.Lock()
         self.recording = LiveCapture(self.root)
+        self.objective_sources = {}
+        self.active_replay = None
         self.stop_event = threading.Event(); self.feed_wake = threading.Event(); self.refill_wake = threading.Event()
         self.backend = DEFAULT_BACKEND; self.pool_token = ''; self.host_token = ''; self.companion_token = ''; self.game_id = None
         self.league_dir = ''; self.target = 5; self.refill_enabled = False; self.workers = []
         self.discovery = DiscoveryHistory(self.root / 'discovery.json')
-        self.lcu = LCU(self.network, discovery=self.discovery)
+        self.lcu = LCU(self.network, discovery=self.discovery, cancel=self.stop_event)
         self.feed = {'enabled': False, 'connected': False, 'lastHeartbeat': None, 'gameState': None, 'error': None, 'sent': 0, 'failures': 0, 'lastSuccess': None, 'availability': 'nicht geprüft'}
         self.refill = {'enabled': False, 'error': None, 'lastCheck': None, 'compatibleUnreserved': None}
         self.jobs = {}; self.job_queue = queue.Queue(maxsize=8); self.candidates = []
@@ -112,12 +116,20 @@ class App:
                 self.discovery.seed_rankings(saved_rankings['items'])
         except (OSError, ValueError, TypeError, AttributeError):
             pass
+        for item in self.ranking_state['items']:
+            source = self.load_objective_source(item['matchId'])
+            item['objectiveSource'] = {'status': 'ready' if source else 'unchecked', 'count': len(source['events']) if source else 0}
+        try:
+            self.active_replay = match_id(json.loads((self.root / 'active-replay.json').read_text(encoding='utf-8'))['matchId'])
+            self.load_objective_source(self.active_replay)
+        except (OSError, ValueError, TypeError, KeyError):
+            self.active_replay = None
         self.sessions = {}
         try:
             saved = json.loads((self.root / 'settings.json').read_text(encoding='utf-8'))
             self.backend = validate_backend(saved.get('backendUrl', DEFAULT_BACKEND), allow_http_local)
             self.league_dir = saved.get('leagueDir', '')
-            self.lcu = LCU(self.network, self.league_dir, discovery=self.discovery)
+            self.lcu = LCU(self.network, self.league_dir, discovery=self.discovery, cancel=self.stop_event)
             self.target = max(1, min(20, int(saved.get('target', 5))))
         except (OSError, ValueError, TypeError):
             pass
@@ -140,6 +152,9 @@ class App:
         with self.feed_lock, self.lock:
             # Only the restricted feed capability is stored, never the host token.
             atomic_json(self.root / 'connection.json', settings)
+            if self.game_id is not None and (self.game_id != settings['gameId'] or self.backend != settings['backendUrl']):
+                self.active_replay = None
+                (self.root / 'active-replay.json').unlink(missing_ok=True)
             self.backend = settings['backendUrl']; self.game_id = settings['gameId']; self.companion_token = settings['token']
             self.host_token = ''
             self.feed.update(enabled=True, connected=False, lastHeartbeat=None, lastSuccess=None, gameState=None, error=None, failures=0, sent=0, availability='waiting')
@@ -173,12 +188,14 @@ class App:
             if gid != self.game_id:
                 self.host_token = ''
                 self.companion_token = ''
+                self.active_replay = None
+                (self.root / 'active-replay.json').unlink(missing_ok=True)
             self.backend = backend; self.game_id = gid; self.target = target; self.league_dir = league
             if data.get('poolToken'):
                 self.pool_token = data['poolToken']
             if data.get('hostToken'):
                 self.host_token = data['hostToken']
-            self.lcu = LCU(self.network, league, discovery=self.discovery)
+            self.lcu = LCU(self.network, league, discovery=self.discovery, cancel=self.stop_event)
             atomic_json(self.root / 'settings.json', {'backendUrl': backend, 'leagueDir': league, 'target': target})
             self.feed.update(enabled=bool(self.game_id and (self.host_token or self.companion_token)), error=None, failures=0, lastSuccess=None)
         self.feed_wake.set()
@@ -217,6 +234,57 @@ class App:
             self.feed['availability'] = 'echte Liveclient-Daten verfügbar'
         return data
 
+    def load_objective_source(self, identity):
+        try:
+            identity = match_id(identity)
+            source = json.loads((self.root / 'timeline-sources' / (identity + '.json')).read_text(encoding='utf-8'))
+            if not valid_source(source) or source.get('matchId') != identity:
+                return None
+            self.objective_sources[identity] = source
+            return source
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            return None
+
+    def check_replay_source(self, identity, fresh_source=None):
+        identity = match_id(identity)
+        try:
+            source = fresh_source if fresh_source is not None else self.objective_sources.get(identity) or self.load_objective_source(identity) or self.lcu.objective_source(identity)
+            if not valid_source(source) or source.get('matchId') != identity:
+                raise ValueError('Keine vollständige Objective-Timeline verfügbar.')
+            directory = self.root / 'timeline-sources'
+            directory.mkdir(parents=True, exist_ok=True)
+            atomic_json(directory / (identity + '.json'), source)
+            with self.lock:
+                self.objective_sources[identity] = source
+            result = {'status': 'ready', 'count': len(source['events'])}
+        except (ReplayError, RemoteError, OSError, ValueError, TypeError, KeyError):
+            result = {'status': 'unavailable', 'count': 0}
+        with self.lock:
+            for item in self.ranking_state['items']:
+                if item['matchId'] == identity:
+                    item['objectiveSource'] = result
+        return result
+
+    def game_input(self, data):
+        # No client/network I/O in the feed worker. Raw captures remain untouched.
+        with self.lock:
+            selected = self.objective_sources.get(self.active_replay)
+            explicitly_selected = self.active_replay is not None
+            sources = list(self.objective_sources.values())
+        if selected is not None:
+            try:
+                return enrich_snapshot(selected, data)
+            except ValueError:
+                raise ReplayError('Live-Daten passen nicht zum ausgewählten Replay. Richtiges Replay in der Liste wählen; keine Objective-Ereignisse gesendet.') from None
+        if explicitly_selected:
+            return data
+        matching = [source for source in sources if matches_source(source, data)]
+        if len(matching) == 1:
+            return enrich_snapshot(matching[0], data)
+        if len(matching) > 1:
+            raise ReplayError('Mehrere Objective-Timelines passen; Replay in der Liste auswählen.')
+        return data
+
     def feed_start(self):
         with self.lock:
             if not self.game_id or not (self.host_token or self.companion_token):
@@ -249,7 +317,7 @@ class App:
                 players = data['allPlayers']
                 if isinstance(clock, bool) or not isinstance(clock, (int, float)) or not math.isfinite(clock) or clock < 0 or not 0 < len(players) <= 20 or not all(isinstance(p, dict) for p in players):
                     raise ReplayError('LoL-Live-Daten unvollständig.')
-                roster = sorted((str(p.get('riotId', p.get('summonerName', ''))), str(p.get('championName', '')), str(p.get('team', ''))) for p in players)
+                roster = sorted((player_identity(p), base_champion(p), str(p.get('team', ''))) for p in players)
                 identity = hashlib.sha256(json.dumps([roster, data['gameData'].get('gameMode'), data['gameData'].get('mapNumber')], sort_keys=True).encode()).hexdigest()
                 # Scope session to backend + BronzeBrawl game id; preserve across stop/restart.
                 key = hashlib.sha256((backend + ':' + str(gid)).encode()).hexdigest()
@@ -264,7 +332,7 @@ class App:
                     if not self.feed['enabled']:
                         return 3
                 # One fresh fetch, one POST; retries fetch again, never replay a stale buffer.
-                self.network.request('POST', backend + '/sendLoLInput', {'X-Game-Token': token}, {'gameId': gid, 'input': data})
+                self.network.request('POST', backend + '/sendLoLInput', {'X-Game-Token': token}, {'gameId': gid, 'input': self.game_input(data)})
                 self.sessions[key] = {'identity': identity, 'clock': clock}
                 atomic_json(self.root / 'sessions.json', self.sessions)
                 with self.lock:
@@ -301,7 +369,7 @@ class App:
                 if isinstance(clock, bool) or not isinstance(clock, (int, float)) or not math.isfinite(clock) or clock < 0 or not 0 < len(players) <= 20 or not all(isinstance(p, dict) for p in players):
                     data = None; availability = 'waiting'
                 else:
-                    roster = sorted((str(p.get('riotId', p.get('summonerName', ''))), str(p.get('championName', '')), str(p.get('team', ''))) for p in players)
+                    roster = sorted((player_identity(p), base_champion(p), str(p.get('team', ''))) for p in players)
                     identity = hashlib.sha256(json.dumps([roster, data['gameData'].get('gameMode'), data['gameData'].get('mapNumber')], sort_keys=True).encode()).hexdigest()
                     session = {'identity': identity, 'clock': clock}
                     previous = self.sessions.get(key)
@@ -321,7 +389,7 @@ class App:
             if data is not None:
                 # Repeated clocks are safe: the server handles event idempotency.
                 # Sending paused snapshots keeps connection and feed freshness honest.
-                accepted = self.network.request('POST', backend + '/companion/input', headers, {'gameId': gid, 'input': data})
+                accepted = self.network.request('POST', backend + '/companion/input', headers, {'gameId': gid, 'input': self.game_input(data)})
                 if not isinstance(accepted, dict) or accepted.get('gameId') != gid or accepted.get('state') not in ('live', 'ended'):
                     raise RemoteError(502)
                 session['ended'] = accepted['state'] == 'ended'
@@ -353,7 +421,7 @@ class App:
                     self.feed.update(enabled=False, error=f'Verbindung abgelehnt (HTTP {exc.status}). Mit v einen neuen Verbindungscode hinterlegen.')
                     return 3
             return min(12, self._feed_failure(exc))
-        except (OSError, ValueError, KeyError, TypeError) as exc:
+        except (ReplayError, OSError, ValueError, KeyError, TypeError) as exc:
             return min(12, self._feed_failure(exc))
 
     def _feed_size_failure(self):
@@ -468,14 +536,70 @@ class App:
             result['items'] = sort_rankings(result['items'])
             return result
 
-    def rank_replays(self, candidates=None):
+    def open_replay(self, identity, download=False):
+        """Launch a ranked replay locally; never download without confirmation."""
+        identity = match_id(identity)
+        with self.lock:
+            item = next((dict(row) for row in self.ranking_state['items'] if row['matchId'] == identity), None)
+        if item is None:
+            raise ReplayError('Replay ist nicht mehr in der Rangliste. Bitte erneut auswählen.')
+        client = self.lcu
+        path = client.local_replay_path(identity)
+        if path is None:
+            with self.lock:
+                for row in self.ranking_state['items']:
+                    if row['matchId'] == identity:
+                        row.update(downloaded=False, filename=None)
+            if not download:
+                return {'requiresDownload': True, 'matchId': identity}
+            if self.stop_event.is_set():
+                raise ReplayError('Wiedergabe abgebrochen.')
+            client.download(identity, item['gameVersion'], self.stop_event)
+            path = client.local_replay_path(identity)
+            if path is None:
+                raise ReplayError('Download abgeschlossen, aber Replay-Datei nicht gefunden.')
+        with self.lock:
+            for row in self.ranking_state['items']:
+                if row['matchId'] == identity:
+                    row.update(downloaded=True, filename=path.name)
+        source_status = self.check_replay_source(identity)
+        with self.feed_lock:
+            previous = self.active_replay
+            self.active_replay = identity
+        try:
+            result = client.watch_local(identity, item['gameVersion'], self.stop_event)
+        except Exception:
+            with self.feed_lock:
+                self.active_replay = previous
+            raise
+        atomic_json(self.root / 'active-replay.json', {'matchId': identity})
+        if source_status['status'] != 'ready':
+            result = {**result, 'message': result.get('message', '') + ' Objective-Timeline fehlt; neutrale Objective-Rewards sind nicht vollständig verfügbar.'}
+        return result
+
+    def refresh_rankings(self):
+        """Re-probe only listed matches, never discover or download another replay."""
+        candidates = [{'matchId': item['matchId']} for item in self.rankings()['items']]
+        if not candidates:
+            with self.lock:
+                self.ranking_state.update(error=None, notice='Keine Replays in der Liste. Mit R neue Replays holen.')
+            return self.rankings()
+        return self.rank_replays(candidates, force=True)
+
+    def rank_replays(self, candidates=None, force=False):
         """Rank discovered foreign matches independently of slow file downloads."""
         with self.ranking_lock:
             with self.lock:
                 self.ranking_state.update(running=True, error=None, skipped=0, notice=None)
+            original = {item['matchId']: dict(item) for item in self.rankings()['items']}
+            client_ready = False
             try:
                 client = self.lcu
                 current = client.current_version()
+                for existing in ([] if force else self.rankings()['items']):
+                    if self.stop_event.is_set():
+                        break
+                    self.check_replay_source(existing['matchId'])
                 candidates = client.discover() if candidates is None else candidates
                 if not candidates:
                     with self.lock:
@@ -487,6 +611,7 @@ class App:
                     raise ReplayError('Aktuelles Konto für den Ausschluss eigener Spiele nicht verfügbar.')
                 account = hashlib.sha256(own.encode()).hexdigest()
                 directory = client.replay_dir()
+                client_ready = True
                 cached = {item['matchId']: item for item in self.rankings()['items']} if account == self.ranking_account else {}
                 files = {}
                 for path in sorted(directory.glob('*.rofl'))[:500]:
@@ -503,6 +628,11 @@ class App:
                 self.ranking_account = account
                 for candidate in candidates:
                     if self.stop_event.is_set():
+                        if force:
+                            present = {item['matchId'] for item in items}
+                            items.extend(dict(item) for identity, item in original.items() if identity not in present)
+                            with self.lock:
+                                self.ranking_state['items'] = list(items)
                         break
                     try:
                         identity = match_id(candidate['matchId'])
@@ -511,25 +641,50 @@ class App:
                         size = stat.st_size if stat else None
                         mtime = stat.st_mtime_ns if stat else None
                         old = cached.get(identity)
-                        if old and old.get('patch') == patch_of(current) and old.get('scores', {}).get('version') == RANKING_VERSION and not old['scores']['metrics'].get('partial', True):
+                        analyzed = False
+                        if not force and old and old.get('patch') == patch_of(current) and old.get('scores', {}).get('version') == RANKING_VERSION and not old['scores']['metrics'].get('partial', True):
                             item = dict(old)
                         else:
                             item = client.analyze(identity, own, current)
+                            analyzed = True
                         if not valid_ranking(item) or item['matchId'] != identity:
                             raise ReplayError('Ungültige Bewertung des League-Clients.')
                         item.update(downloaded=path is not None, filename=path.name if path else None, sizeBytes=size, mtimeNs=mtime)
+                        if analyzed:
+                            item['statsSource'] = {'status': 'ready', 'checkedAt': int(time.time())}
+                        if force:
+                            # analyze() has just fetched BOTH summary and timeline. Never
+                            # let an old App/disk source turn a failed live probe green.
+                            fresh = client.objective_sources.get(identity) or {}
+                            item['objectiveSource'] = self.check_replay_source(identity, fresh_source=fresh)
+                        elif not (analyzed and item.get('objectiveSource', {}).get('status') == 'unavailable'):
+                            item['objectiveSource'] = self.check_replay_source(identity)
                         items.append(item)
                         with self.lock:
                             self.ranking_state.update(items=list(items), updatedAt=int(time.time()))
                     except (ReplayError, RemoteError, OSError, ValueError, KeyError, TypeError):
                         with self.lock:
                             self.ranking_state['skipped'] += 1
+                            if force and candidate['matchId'] in original:
+                                stale = dict(original[candidate['matchId']])
+                                stale['statsSource'] = {'status': 'unavailable', 'checkedAt': int(time.time())}
+                                stale['objectiveSource'] = {'status': 'unavailable', 'count': 0}
+                                items.append(stale)
+                                self.ranking_state['items'] = list(items)
                 with self.lock:
                     self.ranking_state.update(updatedAt=int(time.time()))
+                    if force:
+                        ready = sum(item.get('statsSource', {}).get('status') == 'ready' for item in items)
+                        sources = sum(item.get('objectiveSource', {}).get('status') == 'ready' for item in items)
+                        self.ranking_state['notice'] = f'Neu geprüft: Stats-API {ready}/{len(items)}, Objective-API {sources}/{len(items)}. Fehlgeschlagene Stats bleiben als alte Werte sichtbar.'
                 atomic_json(self.root / 'rankings.json', {**self.rankings(), 'account': account})
             except (ReplayError, RemoteError, OSError, ValueError, KeyError, TypeError) as exc:
                 with self.lock:
                     self.ranking_state['error'] = safe_error(exc)
+                    if force and not client_ready:
+                        self.ranking_state['items'] = [{**item,
+                            'statsSource': {'status': 'unavailable', 'checkedAt': int(time.time())},
+                            'objectiveSource': {'status': 'unavailable', 'count': 0}} for item in original.values()]
             finally:
                 with self.lock:
                     self.ranking_state['running'] = False
@@ -876,14 +1031,16 @@ def print_rankings(rankings, output_fn, sort_by='kills', descending=True):
     items = sort_rankings(rankings['items'], sort_by, descending)
     direction = 'absteigend' if descending else 'aufsteigend'
     output_fn(f'\nReplay-Ranking ({RANKING_LABELS[sort_by]} {direction})')
-    output_fn(f"{'Rang':>4} {'Match':<20} {'Kills':>10} {'Gold (Ende)':>12} {'Carry':>8} {'Momentum':>8}  Datei")
+    output_fn(f"{'Rang':>4} {'Match':<20} {'Kills':>10} {'Gold (Ende)':>12} {'Objectives':>12} {'Carry':>8} {'Momentum':>8}  Datei")
     for index, item in enumerate(items, 1):
         scores = item['scores']
         values = [('–' if scores[key] is None else f'{scores[key]:.2f}').rjust(8) for key in ('carry', 'momentum')]
         rank = str(index) if scores[sort_by] is not None else '–'
         kills = format_team_ratio(scores['metrics']['killsRatio'])
         gold = format_team_ratio(scores['metrics']['goldRatio'])
-        output_fn(f"{rank:>4} {item['matchId']:<20} {kills:>10} {gold:>12}" + ''.join(values) + ('  lokal' if item.get('downloaded') else '  noch nicht geladen'))
+        source = item.get('objectiveSource', {})
+        availability = f"bereit ({source.get('count', 0)})" if source.get('status') == 'ready' else 'fehlt' if source.get('status') == 'unavailable' else 'ungeprüft'
+        output_fn(f"{rank:>4} {item['matchId']:<20} {kills:>10} {gold:>12} {availability:>12}" + ''.join(values) + ('  lokal' if item.get('downloaded') else '  noch nicht geladen'))
     if not items:
         output_fn('Noch keine bewertbaren fremden Summoner’s-Rift-Matches gefunden.')
     if rankings.get('running'):
@@ -993,6 +1150,7 @@ def main():
     parser = argparse.ArgumentParser(description='BronzeBrawl Companion: Replays holen und Live-Daten im Hintergrund weitergeben.')
     parser.add_argument('--server', help=argparse.SUPPRESS)
     parser.add_argument('--league-dir', help='League-Ordner, falls die automatische Erkennung fehlschlägt')
+    parser.add_argument('--plain', action='store_true', help='Einfache Texteingabe statt interaktivem Terminal-Dashboard')
     parser.add_argument('--web', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--no-browser', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--allow-http-local', action='store_true', help=argparse.SUPPRESS)
@@ -1009,7 +1167,9 @@ def main():
             app.close()
             parser.error(safe_error(exc))
     if not args.web:
-        return run_terminal(app)
+        if args.plain or not (sys.stdin.isatty() and sys.stdout.isatty()):
+            return run_terminal(app)
+        return run_dashboard(app)
     try:
         server = create_server(app)
     except OSError:
@@ -1026,6 +1186,22 @@ def main():
         pass
     finally:
         server.server_close(); app.close()
+    return 0
+
+
+def run_dashboard(app):
+    try:
+        from tui import CompanionTUI
+    except ImportError:
+        app.close()
+        print('Terminal-Oberfläche nicht verfügbar. start.cmd verwenden oder '
+              'python -m pip install -r requirements.txt ausführen. '
+              'Ohne Zusatzpakete: python companion.py --plain', file=sys.stderr)
+        return 1
+    try:
+        CompanionTUI(app).run()
+    finally:
+        app.close()
     return 0
 
 

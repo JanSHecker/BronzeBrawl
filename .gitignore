@@ -10,6 +10,7 @@
 /Backend/replay-storage/
 /Companion/__pycache__/
 /Companion/tests/__pycache__/
+/Companion/.venv/
 
 # === Frontend ===
 /Frontend/node_modules/

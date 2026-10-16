@@ -15,15 +15,15 @@ export const REQUIRED_APPLICATION_TABLES = [
 
 export const REQUIRED_APPLICATION_COLUMNS: Record<string, readonly string[]> = {
   game: [
-    'gameId', 'punishmentAmount', 'rewardAmount',
+    'gameId', 'punishmentAmount', 'rewardAmount', 'difficulty',
     'state', 'hostTokenHash', 'lastGameTime', 'lastFeedAt', 'rosterFingerprint', 'feedSnapshot',
     'companionTokenHash', 'lastCompanionAt', 'companionAvailability', 'gameCode',
   ],
   team: ['teamId', 'teamName', 'gameGameId'],
   champion: ['championId', 'championName', 'summonerName', 'teamTeamId', 'riotId', 'riotIdGameName', 'riotIdTagLine', 'rotationEndsAtGameTime'],
-  player: ['playerId', 'playerName', 'teamTeamId', 'gameGameId', 'championChampionId', 'playerTokenHash', 'chestProgress'],
+  player: ['playerId', 'playerName', 'teamTeamId', 'gameGameId', 'championChampionId', 'playerTokenHash', 'chestProgress', 'shield', 'previousChampionId'],
   punishment: ['punishmentId', 'amount', 'punishmentType', 'recieved', 'playerPlayerId', 'distributorPlayerId', 'unit', 'remainingAmount'],
-  reward: ['rewardId', 'amount', 'rewardType', 'distributed', 'playerPlayerId', 'chestType', 'openedAt', 'choices', 'sourceEventId'],
+  reward: ['rewardId', 'amount', 'rewardType', 'distributed', 'playerPlayerId', 'chestType', 'openedAt', 'choices', 'sourceEventId', 'distribution'],
   takedown: ['takedownId', 'multiKill', 'shutdown', 'killerChampionId', 'killedChampionId', 'punishmentPunishmentId', 'rewardRewardId'],
   event: ['eventId', 'ingameId', 'eventType', 'gameGameId', 'takedownTakedownId', 'rewardRewardId', 'payload'],
   activity_log: ['activityId', 'gameId', 'type', 'recordedAt', 'gameTime', 'data'],
@@ -66,6 +66,7 @@ export const REQUIRED_MIGRATIONS = [
   { name: 'TimeOnlyRotation1792400000000', timestamp: 1792400000000 },
   { name: 'ActivityLog1792500000000', timestamp: 1792500000000 },
   { name: 'MysteryBoxes1792600000000', timestamp: 1792600000000 },
+  { name: 'UniqueRewards1792700000000', timestamp: 1792700000000 },
 ] as const;
 
 export type DatabaseReadiness =

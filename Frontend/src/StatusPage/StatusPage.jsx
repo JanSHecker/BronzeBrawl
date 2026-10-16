@@ -21,11 +21,13 @@ const StatusPage = () => {
     if (!data || !Array.isArray(data.kda) || data.kda.length !== 3
       || !Array.isArray(data.punishments) || !Array.isArray(data.rewards) || !Array.isArray(data.enemyTeam)) throw new Error("Invalid status response");
     if (!data.team) { navigate("/team", { replace: true }); return; }
-    if (!data.champion) { navigate("/champion", { replace: true }); return; }
+    if (!data.champion && data.gameState !== 'ended') { navigate("/champion", { replace: true }); return; }
     setStatus(data);
     localStorage.setItem("teamId", data.team.teamId);
-    localStorage.setItem("activeChampionId", data.champion.championId);
-    localStorage.setItem("activeChampionName", data.champion.championName);
+    if (data.champion) {
+      localStorage.setItem("activeChampionId", data.champion.championId);
+      localStorage.setItem("activeChampionName", data.champion.championName);
+    }
   };
   const { error, retry, refresh } = usePolling(fetchStatus);
   const version = localStorage.getItem(GAME_VERSION_KEY) || DEFAULT_GAME_VERSION;
@@ -37,15 +39,15 @@ const StatusPage = () => {
     {!status ? <p>Loading game status…</p> : <>
       <div className="status-match">
         <div className="status-panel status-player">
-          <img src={`https://static.bigbrain.gg/assets/lol/riot_static/${version}/img/champion/${processChampionName(status.champion.championName)}.png`}
-            onError={event => { event.currentTarget.onerror = null; event.currentTarget.src = placeholder; }} alt={status.champion.championName} />
-          <div><p>{status.player?.playerName}</p><strong>{status.champion.championName}</strong><p className="status-kda" aria-label={`${status.kda[0]} kills, ${status.kda[1]} deaths, ${status.kda[2]} assists`}>{status.kda.join("/")}</p></div>
+          <img src={status.champion ? `https://static.bigbrain.gg/assets/lol/riot_static/${version}/img/champion/${processChampionName(status.champion.championName)}.png` : placeholder}
+            onError={event => { event.currentTarget.onerror = null; event.currentTarget.src = placeholder; }} alt={status.champion?.championName || 'No champion'} />
+          <div><p>{status.player?.playerName}</p><strong>{status.champion?.championName || 'No champion'}</strong><p className="status-kda" aria-label={`${status.kda[0]} kills, ${status.kda[1]} deaths, ${status.kda[2]} assists`}>{status.kda.join("/")}</p><p className="status-own-shield"><StatusIcon name="shield" />{status.player?.shield || 0}</p></div>
         </div>
         <ChampionRotation rotationRemainingSeconds={status.rotationRemainingSeconds} rotationAvailable={status.rotationAvailable}
           navigate={navigate} ended={status.gameState === "ended"} />
       </div>
       <PunishmentCounters punishments={status.punishments} onRefresh={refresh} />
-      <ChestInventory rewards={status.rewards} enemyTeam={status.enemyTeam} onRefresh={refresh} />
+      <ChestInventory rewards={status.rewards} enemyTeam={status.enemyTeam} recipients={status.recipients} ended={status.gameState === 'ended'} onRefresh={refresh} />
       <ChestProgress progress={status.chestProgress} />
     </>}
   </div>;

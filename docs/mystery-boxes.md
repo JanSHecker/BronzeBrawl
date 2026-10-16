@@ -8,25 +8,34 @@ one persistent chest and resets only that milestone's progress.
 
 | Category | Milestone | Chest | Recipients |
 | --- | --- | --- | --- |
-| Kills | 1 champion kill | Standard | Player controlling the killer |
+| Kills | Each champion kill | Standard on spree 1–2, Epic on 3–7, Legendary on 8+ | Player controlling the killer |
 | Assists | 2 champion assists | Support | Player controlling the assister |
 | Revenge | 3 deaths, including environment deaths | Revenge | Player controlling the victim |
 | Turret | 1 destroyed turret | Turret | Every joined player on the attacking team |
-| Grubs / Herald / Dragon | 1 objective event | Epic | Every joined player on the killer's team |
+| Grubs / Herald / Dragon | 1 Herald/Dragon, or majority of a completed three-grub group | Epic | Every joined player on the winning team |
 | Baron / Elder | 1 objective event | Legendary | Every joined player on the killer's team |
 
 Team rewards include players who joined a team but have not selected a champion.
 Unassigned players, opponents, and players joining after ingestion receive no
 retroactive objective rewards. Event replay cannot duplicate progress or chests.
-Grubs are counted per reported event (`HordeKill` / `VoidGrubKill`), not per camp.
+Grubs (`HordeKill` / `VoidGrubKill`) are accumulated in groups of three. No chest
+is issued until all three are dead; only the team with two or three kills wins.
+The third grub's event triggers one Epic chest per joined winning teammate.
 Only the final `TurretKilled` event counts, not the supplementary `FirstBrick`.
 Elder uses `DragonKill` with `DragonType: Elder`; other dragons use the epic group.
 Objective attribution uses the killer's roster team. For minion turret last hits,
 the destroyed turret's `T1`/`T100` or `T2`/`T200` identifier determines the opposing
 team. An unresolvable objective team fails ingestion atomically instead of guessing.
 
-The supported objective event names must still be checked against a current live
-client session, especially grubs. Synthetic tests do not prove live API coverage.
+Kill sprees follow the LoL participant, including kills before a BronzeBrawl player
+takes over. Credited champion deaths reset the spree; environment executions do not.
+Each reported multikill milestone grants an additional chest: Double = Standard,
+Triple = Epic, Quadra = Legendary, Penta = Pentakill. Bonuses accumulate for every
+reached milestone and are separate from the kill's normal/upgraded chest.
+
+Replay neutral objectives can come from a verified LCU match timeline, because
+the Live Client API omits these events in some spectator/replay sessions. See
+[replay timeline events](replay-timeline-events.md). Raw live captures stay unmodified.
 
 ## Lifecycle and content boundary
 
@@ -38,12 +47,16 @@ offer once; reopening, polling, reloads, and service restarts do not reroll it.
 The server validates the saved choice, owner, game, opposing team, and one-time
 consumption under the existing game transaction lock.
 
-There is deliberately **one initial choice**: the existing configured reward
-amount, assigned as sips to an opponent. No new content catalog, rarity rules,
-random odds, split payouts, or type-specific effects are introduced. The popup
-renders a list of saved choices so later content is not coupled to its layout.
-Shots and chugs have counters and persistence support, but no new effects that
-generate them are invented in this branch.
+The foundation's original single assignment offer is retained only for historical
+opened rewards. New chests use the [unique reward catalogue](unique-rewards.md):
+eight entries per pool, two persisted offers, native-unit difficulty scaling,
+shields, time effects, and guarded tap-to-distribute actions. Support chests share
+the Standard pool. The old full-assignment endpoint cannot bypass catalogue choices.
+
+Pentakill is a separate one-offer pool: break every enemy player's entire shield,
+assign one chug to each enemy, and grant the owner ten shield points at baseline
+difficulty. Drinking quantities and the grant scale normally; allied shields are
+never broken. Choosing resolves the whole effect atomically.
 
 ## Punishments
 
@@ -54,9 +67,8 @@ Stale/replayed requests conflict instead of consuming another unit. The original
 full-confirm endpoint remains for old clients. No countdown or reward uses taps
 as an earning trigger, avoiding punishment/revenge loops.
 
-Rotation is outside this branch's scope. Its existing component, configuration,
-server rules, and database fields are not changed here. The timer implementation
-already on `main` must not be duplicated in this feature.
+Rotation uses the existing persisted deadline, now with forced release on expiry
+and explicit catalogue adjustments. See [champion rotation](champion-rotation.md).
 
 ## Validation
 

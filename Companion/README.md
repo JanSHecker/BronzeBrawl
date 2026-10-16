@@ -5,8 +5,58 @@ per HTTPS an BronzeBrawl senden. Keine Weboberfläche oder Browser-Netzwerkfreig
 
 ## Starten
 
-`start.cmd` doppelt anklicken. Python **3.11 oder neuer** genügt; keine zusätzlichen
-Pakete. Alternativ im Companion-Ordner: `python companion.py`.
+`start.cmd` doppelt anklicken. Python **3.11 oder neuer** muss installiert sein.
+Beim ersten Start richtet das Skript eine lokale `.venv` ein und installiert
+**Textual** aus `requirements.txt` (Internet erforderlich). Danach startet ein
+Dashboard, das **an Ort und Stelle aktualisiert** wird, statt Ergebnisse anzuhängen.
+Beim Beenden wird die vorherige Terminalansicht wiederhergestellt.
+
+Alternativ im Companion-Ordner:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt
+.venv\Scripts\python companion.py
+```
+
+## Dashboard bedienen
+
+- **↑ / ↓**, **Bild↑ / Bild↓**: Replay auswählen bzw. durch die Tabelle scrollen.
+- **Enter**: ausgewähltes Replay im League Client starten. Fehlt die Datei,
+  erscheint zuerst **Laden und starten** zur Bestätigung. Kein automatischer Download
+  ohne Zustimmung; der lokale Dateistand wird vor jedem Start erneut geprüft.
+- **V**: Verbindungscode in einem Dialog mit verborgener Eingabe einfügen.
+- **R**: neue Replays suchen und herunterladen, ohne die Bedienung oder den Feed
+  zu blockieren. Pro Zeitpunkt läuft höchstens ein Replay-Vorgang.
+- **F5**: Statistiken und Timeline/API-Zugriff aller Replays in der aktuellen Liste
+  frisch abrufen, ohne Ranking-/Quell-Caches zu übernehmen, neue Matches zu suchen
+  oder Dateien herunterzuladen. **Stats-API** und **Objectives** zeigen das Ergebnis.
+  Nicht erreichbare Statistiken bleiben als ausdrücklich markierte alte Werte
+  erhalten. Auswahl, Sortierung und der laufende Feed bleiben bestehen.
+- **S**: Metrik und Sortierrichtung wählen. Auswahl und Sortierung bleiben bei
+  Aktualisierungen erhalten, solange das ausgewählte Match weiterhin vorhanden ist.
+- **?**: Hilfe und Speicherort/Zähler der lokalen Live-Aufzeichnungen.
+- **Q / Strg+C**: beenden; **Esc**: Dialog schließen.
+
+Verbindungsstatus, LoL-Datenverfügbarkeit und Versandzähler stehen dauerhaft oben.
+Es gibt **keinen Aktivitätsbereich**. Laufende Vorgänge werden kompakt neben der
+Sortierung bzw. in der ausgewählten Zeile angezeigt; Fehler erscheinen als Dialog.
+Die letzte vollständige Tabelle bleibt während der Analyse sichtbar. Kleine Fenster
+werden unterstützt; bei Bedarf lässt sich die Tabelle horizontal scrollen.
+
+**League-Anmeldung:** Das Dashboard selbst und gespeicherte Rankings funktionieren
+ohne League. Suche, Download und Wiedergabe benötigen den geöffneten, eingeloggten
+League Client. Wiedergabe setzt außerdem einen kompatiblen Patch voraus und verwendet
+Leagues lokale Wiedergabe-API mit den unveränderten Originaldateien im Replay-Ordner,
+ohne Shell-Start, Format-Dekodierung oder den alten Replay-Cache.
+Ein gestartetes Replay garantiert **keine** verfügbaren LoL-Livedaten.
+
+### Einfacher Textmodus
+
+Ohne Zusatzpakete: `start.cmd --plain` oder `python companion.py --plain`.
+Bei umgeleiteter Ein-/Ausgabe wird automatisch dieser Modus verwendet. Hier werden
+Befehle weiterhin mit Enter bestätigt und Ergebnisse zeilenweise ausgegeben;
+Replay-Start aus der Tabelle ist nur im Dashboard verfügbar.
 
 ```text
 BronzeBrawl Companion
@@ -19,7 +69,7 @@ Sortieren: s kills | s gold | s carry | s momentum (optional: auf/ab)
 
 1. In der BronzeBrawl-Web-App ein Spiel erstellen und **Companion verbinden** öffnen.
 2. **Neuen Verbindungscode erstellen** anklicken und den Code kopieren.
-3. Im Companion **`v`** eingeben und den vollständigen Code einfügen. Die Eingabe
+3. Im Companion **V** drücken und den vollständigen Code einfügen. Die Eingabe
    bleibt verborgen; mit Enter bestätigen.
 
 Danach holt der Companion alle drei Sekunden echte Daten von LoL und sendet sie
@@ -30,8 +80,8 @@ im Terminal-Modus **keinen lokalen HTTP-Server**.
 Beide Seiten zeigen getrennt an, ob die Verbindung besteht und ob LoL Daten
 liefert. Ein Lebenszeichen wird auch ohne laufendes LoL-Spiel gesendet. Nach
 15 Sekunden ohne Lebenszeichen zeigt die Website „nicht verbunden“. Bei einem
-Netzwerkausfall versucht der Companion automatisch erneut; **`t`** zeigt den Status
-und die Zahl gesendeter Snapshots. Statusänderungen erscheinen automatisch.
+Netzwerkausfall versucht der Companion automatisch erneut. Im Dashboard sind Status
+und Versandzähler dauerhaft sichtbar; im Textmodus zeigt **`t`** dieselben Angaben.
 
 **HTTP 413 / „Live-Snapshot zu groß“:** Kein neuer Verbindungscode nötig.
 Der Server akzeptiert bis zu **4 MiB** pro JSON-Anfrage einschließlich Spiel-ID.
@@ -75,8 +125,8 @@ Startzeit und Quell-URL. Snapshots enthalten direkt das unveränderte JSON-Objek
 der API, ohne zusätzlichen Wrapper, und lassen sich später als Backend-`input`
 verwenden. Es werden keine Ereignisse rekonstruiert oder synthetische Daten erzeugt.
 
-Der Speicherort erscheint beim Terminal-Start. **`t`** zeigt zusätzlich die Zahl
-lokal gespeicherter Snapshots. Schreibfehler werden separat gemeldet und beim
+Im Dashboard zeigt **?** Speicherort und Zahl lokal gespeicherter Snapshots;
+im Textmodus erscheinen diese beim Start bzw. mit **`t`**. Schreibfehler werden separat gemeldet und beim
 nächsten Abruf erneut versucht; der Versand läuft weiter. Dateien werden atomar
 geschrieben, damit fertige JSON-Dateien nicht halb geschrieben sichtbar werden.
 
@@ -118,13 +168,25 @@ beendetem Companion manuell entfernen.
 
 ## Replay-Rankings
 
+Die zusätzliche Spalte **Objectives** prüft unabhängig vom Ranking, ob eine
+vollständige Match-Timeline mit echten Objective-Ereignissen verfügbar ist.
+`✓ N` / `bereit (N)` zeigt die Zahl geladener Ereignisse, `fehlt` eine nicht
+verfügbare Quelle und `ungeprüft` einen noch ausstehenden Check. Beim Start aus
+der Liste wird die gewählte Quelle gespeichert. Neutrale Objectives werden dann
+passend zur Replay-Spielzeit an den Server gesendet, nie vor ihrem Zeitpunkt und
+ohne die rohen Aufzeichnungen zu verändern. Ohne Quelle erscheint eine Warnung;
+das Replay kann trotzdem gestartet werden. Details und Grenzen stehen in
+[`docs/replay-timeline-events.md`](../docs/replay-timeline-events.md).
+
 Beim Start werden die gefundenen fremden Matches bewertet, nach `r` erneut.
 Bewertung und Download sind getrennt: Die sortierte Liste erscheint bereits vor
 dem Download **ausschließlich im Terminal**, ohne Token-Eingabe oder Upload.
 Gespeicherte Rankings werden direkt beim Start angezeigt, danach im Hintergrund
-aktualisiert. **`l`** zeigt die Liste erneut, ohne neue Downloads oder Analyse.
+aktualisiert. Im Dashboard wird die Tabelle direkt ersetzt; im Textmodus zeigt
+**`l`** die Liste erneut, ohne neue Downloads oder Analyse.
 
-Sortierung direkt im Terminal (standardmäßig absteigend):
+Im Dashboard öffnet **S** die Sortierauswahl (standardmäßig Kills absteigend).
+Im Textmodus gelten weiterhin diese Befehle:
 
 ```text
 s kills
@@ -137,8 +199,8 @@ s gold auf
 **`s`** alleine fragt die gewünschte Sortierung ab. `auf` / `ab` wählt die
 Richtung; fehlende Scores bleiben immer am Ende und werden nie als 0 behandelt.
 Die Auswahl bleibt auch nach einer Hintergrundaktualisierung oder `r` erhalten.
-Alle Sortierbefehle und ein Beispiel stehen direkt unter jeder Rangliste.
-Der League Client muss geöffnet sein. Karte 11, aktueller Patch und fremde
+Im Textmodus stehen alle Sortierbefehle und ein Beispiel unter jeder Rangliste.
+Für neue Bewertungen muss der League Client geöffnet und eingeloggt sein. Karte 11, aktueller Patch und fremde
 Spieler werden vor der Bewertung erneut geprüft; unvollständige oder eigene
 Matches werden ausgeschlossen. Die Datei-Spalte zeigt, was bereits lokal liegt;
 beim Abgleich werden maximal 500 Dateien im League-Replay-Ordner geprüft.
@@ -197,9 +259,13 @@ python companion.py --league-dir "D:\Riot Games\League of Legends"
 ## Entwicklung
 
 ```powershell
-python -m unittest discover -s tests -v
+.venv\Scripts\python -m unittest discover -s tests -v
 ```
 
 Tests verwenden Fake-Transporte und strukturelle Dateien, keine echten Match-
-Aufzeichnungen. Alte Verwaltungs-Schnittstellen sind nur noch mit dem expliziten
+Aufzeichnungen. Mit Textual werden zusätzlich tastaturgesteuerte Headless-Tests
+für Dashboard, Dialoge, Hintergrundjobs und Replay-Start ausgeführt. Ohne Textual
+werden ausschließlich diese UI-Tests übersprungen; die übrigen Tests laufen mit
+`python -m unittest discover -s tests -v` ohne Zusatzpakete.
+Alte Verwaltungs-Schnittstellen sind nur noch mit dem expliziten
 Kompatibilitätsmodus `--web --no-browser` verfügbar, nicht beim normalen Start.

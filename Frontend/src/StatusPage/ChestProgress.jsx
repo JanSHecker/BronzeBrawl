@@ -4,7 +4,7 @@ import StatusIcon from './StatusIcon';
 export default function ChestProgress({ progress = [] }) {
   return <section className="status-panel status-progress" aria-labelledby="progress-title">
     <div className="status-section-heading"><h2 id="progress-title">Next chest</h2></div>
-    <div className="status-progress-grid">{CHEST_TYPES.map(type => {
+    <div className="status-progress-grid">{CHEST_TYPES.filter(type => type.key).map(type => {
       const value = progress.find(item => item.key === type.key) || { current: 0, target: type.target };
       return <div key={type.key}>
         <div className="status-progress-label"><StatusIcon name={type.icon} /><span>{type.name}</span><span>{value.current}/{value.target}</span></div>

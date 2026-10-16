@@ -59,6 +59,13 @@ const roster = [
 const kill=(id=1,killer='Alice#EUW',victim='Bob#EUW')=>({EventID:id,EventName:'ChampionKill',EventTime:id,KillerName:killer,VictimName:victim,Assisters:['Assist#EUW']});
 const feed=(events: any[]=[],time=10)=>({allPlayers:structuredClone(roster),events:{Events:events},gameData:{gameTime:time,gameMode:'CLASSIC',mapNumber:11}});
 const settings={punishmentAmount:7,rewardAmount:9};
+// Explicit historical foundation fixtures; new catalogue security is tested in rewards.spec.ts.
+function legacyRewards() {
+  for (const reward of db.all(Reward)) {
+    reward.openedAt = new Date();
+    reward.choices = [{ id: 'assign', effect: 'assign', amount: reward.amount, unit: 'sips' }];
+  }
+}
 let db: MemoryDB, service: any, game: any, a: any, b: any, teams: any, champions: any;
 async function setup() {
   game=await service.runGame(settings);
@@ -86,7 +93,7 @@ describe('mystery chest foundation', () => {
     const support = await supporter();
     const events = [1, 2, 3].map(id => ({ ...kill(id), Assisters: ['Assist#EUW', 'Assist#EUW', 'Alice#EUW', 'Bob#EUW'] }));
     await service.ingest({ gameId: game.gameId, input: feed(events) }, game.hostToken);
-    expect(db.all(Reward).filter(row => row.player.playerId === a.playerId).map(row => row.chestType)).toEqual(['standard', 'standard', 'standard']);
+    expect(db.all(Reward).filter(row => row.player.playerId === a.playerId).map(row => row.chestType)).toEqual(['standard', 'standard', 'epic']);
     expect(db.all(Reward).filter(row => row.player.playerId === b.playerId).map(row => row.chestType)).toEqual(['revenge']);
     const status = await service.status(support.playerId, support.playerToken);
     expect(status.rewards.map(row => row.chestType)).toEqual(['support']);
@@ -101,9 +108,9 @@ describe('mystery chest foundation', () => {
     await setup();
     const teammate = await service.createPlayer({ playerName: 'Waiting teammate', gameCode: game.gameCode });
     await service.joinTeam({ player: teammate.playerId, team: teams[0].teamId }, teammate.playerToken);
-    const events = ['TurretKilled', 'HordeKill', 'HeraldKill', 'DragonKill', 'DragonKill', 'BaronKill'].map((EventName, i) => ({
+    const events = ['TurretKilled', 'HordeKill', 'HordeKill', 'HordeKill', 'HeraldKill', 'DragonKill', 'DragonKill', 'BaronKill'].map((EventName, i) => ({
       EventID: i + 1, EventTime: i + 1, EventName, KillerName: 'Alice#EUW',
-      ...(EventName === 'DragonKill' ? { DragonType: i === 4 ? 'Elder' : 'Fire' } : {}),
+      ...(EventName === 'DragonKill' ? { DragonType: i === 6 ? 'Elder' : 'Fire' } : {}),
     }));
     const input = feed(events);
     await service.ingest({ gameId: game.gameId, input }, game.hostToken);
@@ -150,6 +157,7 @@ describe('mystery chest foundation', () => {
   test('opening is authorized, durable and repeatable without consuming or changing the offer', async () => {
     await setup();
     await service.ingest({ gameId: game.gameId, input: feed([kill()]) }, game.hostToken);
+    legacyRewards();
     const id = db.all(Reward)[0].rewardId;
     await expect(service.openChest({ id }, b.playerToken)).rejects.toMatchObject({ status: 403 });
     const first = await service.openChest({ id }, a.playerToken);
@@ -204,6 +212,7 @@ describe('gameflow contract',()=>{
     const input = feed([kill()], 12);
     await service.ingest({ gameId: game.gameId, input }, game.hostToken);
     const reward = (await service.status(a.playerId, a.playerToken)).rewards[0];
+    legacyRewards();
     const assigned = await service.confirmReward({ id: reward.rewardId, punishment: { recipient: { playerId: b.playerId } } }, a.playerToken);
     await service.confirmPunishment({ id: assigned.punishmentId }, b.playerToken);
     await service.confirmPunishment({ id: assigned.punishmentId }, b.playerToken);
@@ -553,6 +562,7 @@ describe('gameflow contract',()=>{
   });
   test('one reward atomically produces one server-authoritative enemy penalty',async()=>{
     await setup(); await service.ingest({gameId:game.gameId,input:feed([kill()])},game.hostToken);
+    legacyRewards();
     const request={id:db.all(Reward)[0].rewardId,punishment:{recipient:{playerId:b.playerId},amount:-99,punishmentType:88,distributor:{playerId:999}}};
     const results=await Promise.allSettled([service.confirmReward(request,a.playerToken),service.confirmReward(request,a.playerToken)]);
     expect(results.filter(r=>r.status==='fulfilled')).toHaveLength(1);
@@ -562,11 +572,13 @@ describe('gameflow contract',()=>{
   });
   test('two distinct rewards can each be consumed exactly once',async()=>{
     await setup(); await service.ingest({gameId:game.gameId,input:feed([kill(1),kill(2)])},game.hostToken);
+    legacyRewards();
     for(const r of db.all(Reward)) await service.confirmReward({id:r.rewardId,punishment:{recipient:{playerId:b.playerId}}},a.playerToken);
     expect(db.all(Punishment).filter(p=>p.punishmentType===0)).toHaveLength(2);
   });
   test('reward auth, recipient validation and failure do not consume rewards',async()=>{
     await setup(); await service.ingest({gameId:game.gameId,input:feed([kill()])},game.hostToken); const id=db.all(Reward)[0].rewardId;
+    legacyRewards();
     await expect(service.confirmReward({id,punishment:{recipient:{playerId:b.playerId}}},b.playerToken)).rejects.toMatchObject({status:403});
     await expect(service.confirmReward({id,punishment:{recipient:{playerId:a.playerId}}},a.playerToken)).rejects.toMatchObject({status:400});
     db.failOn=Punishment; await expect(service.confirmReward({id,punishment:{recipient:{playerId:b.playerId}}},a.playerToken)).rejects.toThrow('injected');

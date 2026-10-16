@@ -71,11 +71,13 @@ export class AppController {
   async runGame(
     @Query('punishmentAmount') punishmentAmount,
     @Query('rewardAmount') rewardAmount,
+    @Query('difficulty') difficulty,
   ) {
     if (this.gameflow) {
       return this.gameflow.runGame({
         punishmentAmount: this.integerQuery(punishmentAmount, 'punishmentAmount'),
         rewardAmount: this.integerQuery(rewardAmount, 'rewardAmount'),
+        difficulty,
       });
     }
     return this.gameflowUnavailable();
@@ -150,6 +152,18 @@ export class AppController {
   async consumePunishment(@Body() input, @Headers('x-player-token') token: string) {
     if (this.gameflow) return this.gameflow.consumePunishment(input, token);
     return this.gameflowUnavailable();
+  }
+
+  @Post('chooseReward')
+  async chooseReward(@Body() input, @Headers('x-player-token') token: string) {
+    if (!this.gameflow) return this.gameflowUnavailable();
+    return this.gameflow.chooseReward(input, token);
+  }
+
+  @Post('distributeReward')
+  async distributeReward(@Body() input, @Headers('x-player-token') token: string) {
+    if (!this.gameflow) return this.gameflowUnavailable();
+    return this.gameflow.distributeReward(input, token);
   }
 
   @Get('Status')

@@ -804,7 +804,9 @@ class TerminalTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root, \
              patch.dict('os.environ', {'LOCALAPPDATA': root}), \
              patch.object(sys, 'argv', ['companion.py']), \
-             patch.object(companion, 'run_terminal', return_value=0) as terminal, \
+             patch.object(sys.stdin, 'isatty', return_value=True), \
+             patch.object(sys.stdout, 'isatty', return_value=True), \
+             patch.object(companion, 'run_dashboard', return_value=0) as terminal, \
              patch.object(companion, 'create_server') as server, \
              patch.object(companion.webbrowser, 'open') as browser:
             self.assertEqual(companion.main(), 0)

@@ -11,6 +11,8 @@ const paths = {
   chugs: 'M4 4h12v17H4V4Zm12 3h3c3 0 3 10 0 10h-3M7 8v9m5-9v9M4 4V2h12v2',
   close: 'm6 6 12 12M6 18 18 6',
   check: 'm5 12 4 4L19 6',
+  shield: 'M12 3 3 7v5c0 5 5 8 9 10 4-2 9-5 9-10V7l-9-4Z',
+  shieldBreak: 'M12 3 3 7v5c0 5 5 8 9 10 4-2 9-5 9-10V7l-9-4Zm1 2-4 7h6l-4 8',
 };
 
 export default function StatusIcon({ name, ...props }) {

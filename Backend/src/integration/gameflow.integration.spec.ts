@@ -9,9 +9,14 @@ import { Takedown } from '../entities/takedown.entity';
 import { Game } from '../entities/game.entity';
 import { Champion } from '../entities/champion.entity';
 import { ActivityLog } from '../entities/activity-log.entity';
+import { Player } from '../entities/player.entity';
+import { rewardConfiguration, scaledChoice } from '../rewards';
 import { TimeOnlyRotation1792400000000 } from '../../migrations/1792400000000-TimeOnlyRotation';
 
 const enabled = Boolean(process.env.TEST_DATABASE_URL);
+// Catalogue distributions deliberately perform several real, locked HTTP-equivalent taps.
+// Allow enough time on local PostgreSQL and when a disposable fixture DB has accumulated games.
+jest.setTimeout(30_000);
 const settings = { punishmentAmount: 7, rewardAmount: 9 };
 const roster = [
   { championName: 'Ahri', riotIdGameName: 'AuditAlice', riotIdTagLine: 'TEST', team: 'ORDER' },
@@ -143,12 +148,18 @@ const feed = (events: any[] = [], time = 20) => ({ allPlayers: roster, events: {
     const chest = (await service.status(a.playerId, a.playerToken)).rewards[0];
     const offers = await Promise.all([service.openChest({ id: chest.rewardId }, a.playerToken), other.openChest({ id: chest.rewardId }, a.playerToken)]);
     expect(offers[0]).toEqual(offers[1]);
-    await service.confirmReward({ id: chest.rewardId, choiceId: 'assign', punishment: { recipient: { playerId: b.playerId } } }, a.playerToken);
+    const choice = offers[0].choices.find(row => ['single', 'free'].includes(row.mode));
+    let selected = await service.chooseReward({ id: chest.rewardId, choiceId: choice.id }, a.playerToken);
+    while (!selected.distributed) {
+      const state = selected.distribution;
+      const unit = ['sips', 'shots', 'chugs'].find(unit => state.remaining[unit]);
+      selected = await other.distributeReward({ id: chest.rewardId, expectedVersion: state.version, unit, recipientId: b.playerId }, a.playerToken);
+    }
     const punishment = (await other.status(b.playerId, b.playerToken)).punishments[0];
     const tap = { id: punishment.punishmentId, expectedRemaining: punishment.remainingAmount };
     const results = await Promise.allSettled([service.consumePunishment(tap, b.playerToken), other.consumePunishment(tap, b.playerToken)]);
     expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
-    expect((await other.status(b.playerId, b.playerToken)).punishmentTotals.sips).toBe(8);
+    expect((await other.status(b.playerId, b.playerToken)).punishments.find(row => row.punishmentId === punishment.punishmentId).remainingAmount).toBe(punishment.remainingAmount - 1);
   });
 
 
@@ -177,12 +188,33 @@ const feed = (events: any[] = [], time = 20) => ({ allPlayers: roster, events: {
     expect(status.rotationRemainingSeconds).toBe(180);
     expect(status.rewards).toHaveLength(2);
     const request = { id: status.rewards[0].rewardId, punishment: { recipient: { playerId: b.playerId }, amount: -99 } };
+    // A historical foundation offer exercises compatibility under the same game lock.
+    await database.getRepository(Reward).update(request.id, { openedAt: new Date(), choices: [{ id: 'assign', effect: 'assign', amount: 9, unit: 'sips' }] });
     const results = await Promise.allSettled([service.confirmReward(request, a.playerToken), other.confirmReward(request, a.playerToken)]);
     expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
     expect((results.find(result => result.status === 'rejected') as PromiseRejectedResult).reason.status).toBe(409);
     const penalties = (await service.status(b.playerId, b.playerToken)).punishments.filter(item => item.punishmentType === 0);
     expect(penalties).toHaveLength(1);
     expect(penalties[0].amount).toBe(9);
+  });
+
+  test('catalogue taps serialize across services, destroy all shields, and persist partial native units', async () => {
+    const { game, a, b } = await setup();
+    const config = rewardConfiguration({});
+    const choice = scaledChoice(config.pools.legendary.find(row => row.id === 'kings-decree'), 'baseline', config);
+    const row = await database.getRepository(Reward).save({ amount: 2, rewardType: 1, distributed: false,
+      player: { playerId: a.playerId }, chestType: 'legendary', openedAt: new Date(), choices: [choice] });
+    await database.getRepository(Player).update(b.playerId, { shield: 100 });
+    await service.chooseReward({ id: row.rewardId, choiceId: choice.id }, a.playerToken);
+    const other = new GameflowService(database);
+    const tap = { id: row.rewardId, expectedVersion: 0, unit: 'sips', recipientId: b.playerId };
+    const results = await Promise.all([service.distributeReward(tap, a.playerToken), other.distributeReward(tap, a.playerToken)]);
+    expect(results.map(result => result.distribution.version)).toEqual([1, 1]);
+    const status = await other.status(b.playerId, b.playerToken);
+    expect(status.player.shield).toBe(0);
+    expect(status.punishmentTotals.sips).toBe(1);
+    expect(results[0].distribution.lastResult).toMatchObject({ shieldBefore: 100, shield: 0, shieldBroken: true });
+    expect((await new GameflowService(database).status(a.playerId, a.playerToken)).rewards[0].distribution.remaining.sips).toBe(11);
   });
 
   test('an actual transaction rolls back events and consequences without changing timers before retry', async () => {

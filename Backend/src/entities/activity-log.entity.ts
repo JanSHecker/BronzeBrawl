@@ -5,7 +5,8 @@ export type ActivityType =
   | 'game_created' | 'game_started' | 'game_ended'
   | 'player_joined' | 'player_left' | 'team_changed'
   | 'champion_selected' | 'champion_rotated' | 'champion_killed'
-  | 'reward_earned' | 'reward_distributed'
+  | 'multikill' | 'objective_captured'
+  | 'reward_earned' | 'reward_distributed' | 'reward_chosen' | 'champion_expired' | 'shield_changed'
   | 'punishment_assigned' | 'punishment_confirmed';
 
 // Append-only history. Participants are JSON snapshots, not mutable player relations.

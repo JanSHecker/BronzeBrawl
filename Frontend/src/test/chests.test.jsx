@@ -8,7 +8,7 @@ import PunishmentCounters from '../StatusPage/PunishmentCounters';
 const http = vi.hoisted(() => ({ post: vi.fn(), interceptors: { request: { use: vi.fn() } } }));
 vi.mock('axios', () => ({ default: { create: () => http } }));
 const unopened = { rewardId: 7, amount: 9, chestType: 'epic', distributed: false, openedAt: null };
-const opened = { ...unopened, openedAt: '2026-10-16T10:00:00Z', choices: [{ id: 'assign', effect: 'assign', amount: 9, unit: 'sips' }] };
+const opened = { ...unopened, openedAt: '2026-10-16T10:00:00Z', choices: [{ id: 'marked', name: 'Marked', mode: 'single', amounts: { sips: 2, shots: 0, chugs: 0 } }] };
 const enemies = [{ championId: 10, championName: 'Garen', player: { playerId: 50, playerName: 'Sam' } }];
 beforeEach(() => {
   vi.clearAllMocks();
@@ -24,30 +24,73 @@ test('six distinct chest categories display their own inventory and milestones',
   expect(screen.getAllByRole('progressbar').map(bar => bar.getAttribute('aria-valuemax'))).toEqual(['1', '2', '3', '1', '1', '1']);
 });
 
-test('reveal is server-owned, opening survives polling, and resolution refreshes before releasing controls', async () => {
+test('reveal is server-owned, opening survives polling, and tapping assigns without confirmation', async () => {
   const refresh = vi.fn().mockResolvedValue();
   const view = render(<ChestInventory rewards={[unopened]} enemyTeam={enemies} onRefresh={refresh} />);
   fireEvent.click(screen.getByRole('button', { name: 'Grubs / Herald / Dragon chest, 1 available' }));
   expect(screen.getByRole('dialog')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Open', exact: true }));
-  await screen.findByRole('button', { name: '9 Assign sips' });
+  await screen.findByRole('button', { name: 'Marked' });
   expect(http.post).toHaveBeenCalledWith('openChest', { id: 7 });
   view.rerender(<ChestInventory rewards={[opened]} enemyTeam={enemies} onRefresh={refresh} />);
-  fireEvent.click(screen.getByRole('button', { name: '9 Assign sips' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Sam Garen' }));
-  view.rerender(<ChestInventory rewards={[{ ...opened }]} enemyTeam={[...enemies]} onRefresh={refresh} />);
-  expect(screen.getByRole('button', { name: 'Sam Garen' })).toHaveAttribute('aria-pressed', 'true');
-  fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
-  await screen.findByText('Assigned');
-  expect(http.post).toHaveBeenLastCalledWith('confirmReward', { id: 7, choiceId: 'assign', punishment: { recipient: { playerId: 50 } } });
-  expect(refresh).toHaveBeenCalledTimes(2);
+  let current = { ...opened, distribution: { choiceId: 'marked', remaining: { sips: 2, shots: 0, chugs: 0 }, version: 0, targets: {} } };
+  http.post.mockImplementation(async (name, request) => {
+    if (name === 'distributeReward') current = { ...current, distributed: request.expectedVersion === 1, distribution: { ...current.distribution, version: request.expectedVersion + 1, remaining: { sips: 1 - request.expectedVersion, shots: 0, chugs: 0 }, targets: { 50: { sips: request.expectedVersion + 1 } } } };
+    return { data: current };
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Marked' }));
+  const target = await screen.findByRole('button', { name: 'Give 1 sips to Sam. Shield 0.' });
+  expect(screen.queryByRole('button', { name: 'Confirm' })).not.toBeInTheDocument();
+  fireEvent.click(target);
+  fireEvent.click(target);
+  await screen.findByText('Complete');
+  expect(http.post).toHaveBeenLastCalledWith('distributeReward', { id: 7, expectedVersion: 1, unit: 'sips', recipientId: 50 });
 });
 
 test('a previously opened chest restores the same offer without another opening request', async () => {
   render(<ChestInventory rewards={[opened]} enemyTeam={enemies} onRefresh={vi.fn()} />);
   fireEvent.click(screen.getByRole('button', { name: 'Grubs / Herald / Dragon chest, 1 available' }));
-  expect(screen.getByRole('button', { name: '9 Assign sips' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Marked' })).toBeInTheDocument();
   expect(http.post).not.toHaveBeenCalled();
+});
+
+test('Pentakill inventory shows its one enemy-team effect and resolves without manual targeting', async () => {
+  const chest = { ...unopened, chestType: 'pentakill' };
+  const offer = { ...chest, openedAt: '2026-10-16T10:00:00Z', choices: [{
+    id: 'pentakill', name: 'Pentakill', mode: 'enemy_team', amounts: { sips: 0, shots: 0, chugs: 1 }, shieldPoints: 10, breaksShields: true,
+  }] };
+  http.post.mockResolvedValueOnce({ data: offer }).mockResolvedValueOnce({ data: { ...offer, distributed: true } });
+  render(<ChestInventory rewards={[chest]} enemyTeam={enemies} onRefresh={vi.fn()} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Pentakill chest, 1 available' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Open', exact: true }));
+  const choice = await screen.findByRole('button', { name: 'Pentakill', exact: true });
+  expect(screen.getByText('1 chugs per target to every opponent')).toBeInTheDocument();
+  expect(screen.getByText('Gain 10 shield points')).toBeInTheDocument();
+  expect(screen.getByText('Breaks every enemy shield')).toBeInTheDocument();
+  fireEvent.click(choice);
+  await screen.findByText('Complete');
+  expect(http.post).toHaveBeenLastCalledWith('chooseReward', { id: 7, choiceId: 'pentakill' });
+  expect(screen.queryByRole('button', { name: /Give 1/ })).not.toBeInTheDocument();
+});
+
+test('a tap arriving during status refresh starts another queue drain', async () => {
+  let releaseRefresh;
+  const refresh = vi.fn().mockReturnValueOnce(new Promise(resolve => { releaseRefresh = resolve; })).mockResolvedValue();
+  let current = { ...opened, distribution: { choiceId: 'marked', remaining: { sips: 2, shots: 0, chugs: 0 }, version: 0, targets: {} } };
+  http.post.mockImplementation(async (_name, request) => {
+    current = { ...current, distributed: request.expectedVersion === 1, distribution: { ...current.distribution,
+      version: request.expectedVersion + 1, remaining: { sips: 1 - request.expectedVersion, shots: 0, chugs: 0 }, targets: { 50: { sips: request.expectedVersion + 1 } } } };
+    return { data: current };
+  });
+  render(<ChestInventory rewards={[current]} enemyTeam={enemies} onRefresh={refresh} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Grubs / Herald / Dragon chest, 1 available' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Give 1 sips to Sam. Shield 0.' }));
+  await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+  fireEvent.click(screen.getByRole('button', { name: 'Give 1 sips to Sam. Shield 0.' }));
+  expect(http.post).toHaveBeenCalledOnce();
+  await act(async () => releaseRefresh());
+  await screen.findByText('Complete');
+  expect(http.post).toHaveBeenCalledTimes(2);
 });
 
 test('opening failures are retryable and do not consume or hide the chest', async () => {

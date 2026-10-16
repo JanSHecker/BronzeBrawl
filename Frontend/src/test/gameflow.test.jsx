@@ -37,13 +37,13 @@ test("creation always uses three-minute rotation without mode or counter setting
     .mockResolvedValue({ data: [] });
   const setGame = vi.fn();
   mount(<CreationForm setGame={setGame} />);
-  expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: 'Reward difficulty' })).toHaveValue('baseline');
   expect(screen.queryByLabelText("Kills/Deaths until Rotation")).not.toBeInTheDocument();
   expect(screen.getByText(/Each champion starts with 3 minutes/)).toBeInTheDocument();
   screen.getAllByRole("textbox").forEach(input => fireEvent.change(input, { target: { value: "3" } }));
   fireEvent.click(screen.getByRole("button", { name: "CREATE" }));
   await waitFor(() => expect(setGame).toHaveBeenCalledWith({ gameId: 8, gameCode: "KFRW" }));
-  expect(http.get.mock.calls[0]).toEqual(["runGame", { params: { punishmentAmount: "3", rewardAmount: "3" } }]);
+  expect(http.get.mock.calls[0]).toEqual(["runGame", { params: { punishmentAmount: "3", rewardAmount: "3", difficulty: 'baseline' } }]);
 });
 
 test("invite URLs use an origin-based route, never the current query/hash", () => {

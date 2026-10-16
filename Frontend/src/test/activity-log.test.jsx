@@ -70,6 +70,31 @@ test('presentation supports environment kills, assists, amounts and safe unknown
   expect(screen.getAllByText('1:05')).toHaveLength(3);
 });
 
+test('presentation identifies streaks, multikills and timeline objective provenance', () => {
+  render(<EventLog items={[
+    entry(1, 'champion_killed', { killer: { championName: 'Viego' }, victim: { championName: 'Galio' }, killstreak: 8, streakName: 'Legendary' }),
+    entry(2, 'multikill', { killer: { championName: 'Viego' }, count: 5 }),
+    entry(3, 'objective_captured', { objective: 'Grubs', winningTeam: 0, grubScore: [2, 1], source: 'match_timeline' }),
+  ]} />);
+  expect(screen.getByText('Viego killed Galio. Legendary (8).')).toBeInTheDocument();
+  expect(screen.getByText('Viego scored a Pentakill!')).toBeInTheDocument();
+  expect(screen.getByText('Blue team secured Grubs (2–1) [match timeline].')).toBeInTheDocument();
+});
+
+test('catalogue history describes choices, completed distributions, shields and forced expiry without undefined amounts', () => {
+  render(<EventLog items={[
+    entry(1, 'reward_chosen', { player: { playerName: 'Alice' }, choiceId: 'loaded-coin', outcome: 'backfire' }),
+    entry(2, 'reward_distributed', { player: { playerName: 'Alice' }, rewardId: 8 }),
+    entry(3, 'shield_changed', { player: { playerName: 'Bob' }, broken: true, shield: 0 }),
+    entry(4, 'champion_expired', { player: { playerName: 'Alice' }, champion: { championName: 'Ahri' } }),
+  ]} />);
+  expect(screen.getByText('Alice chose loaded-coin — it backfired.')).toBeInTheDocument();
+  expect(screen.getByText('Alice completed reward #8.')).toBeInTheDocument();
+  expect(screen.getByText('Bob lost their entire shield.')).toBeInTheDocument();
+  expect(screen.getByText('Alice must switch away from Ahri.')).toBeInTheDocument();
+  expect(screen.queryByText(/undefined/)).not.toBeInTheDocument();
+});
+
 test('scope changes clear previous history and ignore late responses', async () => {
   session();
   let resolve;

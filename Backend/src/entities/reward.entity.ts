@@ -8,6 +8,7 @@ import {
 import { Player } from './player.entity';
 import { Event } from './event.entity';
 import { Takedown } from './takedown.entity';
+import { RewardChoice, RewardDistribution } from '../rewards';
 
 @Entity()
 export class Reward {
@@ -30,7 +31,10 @@ export class Reward {
   openedAt: Date;
 
   @Column({ type: 'jsonb', nullable: true })
-  choices: Array<{ id: string; effect: string; amount: number; unit: string }>;
+  choices: RewardChoice[];
+
+  @Column({ type: 'jsonb', nullable: true })
+  distribution: RewardDistribution;
 
   @Column({ type: 'integer', nullable: true })
   sourceEventId: number;

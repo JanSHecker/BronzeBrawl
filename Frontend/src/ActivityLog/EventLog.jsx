@@ -12,13 +12,18 @@ export function activityMessage({ type, data }) {
     case "team_changed": return `${playerName(data.player)} joined the ${teamName(data.team)} team.`;
     case "champion_selected": return `${playerName(data.player)} selected ${championName(data.champion)}.`;
     case "champion_rotated": return `${playerName(data.player)} rotated from ${championName(data.previousChampion)} to ${championName(data.champion)}.`;
+    case "champion_expired": return `${playerName(data.player)} must switch away from ${championName(data.champion)}.`;
     case "champion_killed": {
       const assists = data.assisters?.length ? ` Assists: ${data.assisters.map(championName).join(", ")}.` : "";
-      return `${data.killer ? championName(data.killer) : data.environment || "Environment"} killed ${championName(data.victim)}.${assists}`;
+      return `${data.killer ? championName(data.killer) : data.environment || "Environment"} killed ${championName(data.victim)}.${data.streakName ? ` ${data.streakName} (${data.killstreak}).` : ''}${assists}`;
     }
-    case "reward_earned": return `${playerName(data.player)} earned a reward of ${data.amount}.`;
-    case "reward_distributed": return `${playerName(data.player)} distributed ${data.amount} to ${playerName(data.recipient)}.`;
-    case "punishment_assigned": return `${playerName(data.player)} received a punishment of ${data.amount}${data.distributor ? ` from ${playerName(data.distributor)}` : " for a death"}.`;
+    case "multikill": return `${championName(data.killer)} scored a ${data.count === 5 ? 'Pentakill' : data.count === 4 ? 'Quadra Kill' : data.count === 3 ? 'Triple Kill' : 'Double Kill'}!`;
+    case "objective_captured": return `${data.winningTeam === 0 ? 'Blue' : 'Red'} team secured ${data.objective}${data.grubScore ? ` (${data.grubScore[0]}–${data.grubScore[1]})` : ''}${data.source === 'match_timeline' ? ' [match timeline]' : ''}.`;
+    case "reward_earned": return data.chestType ? `${playerName(data.player)} earned a ${data.chestType} chest.` : `${playerName(data.player)} earned a reward of ${data.amount}.`;
+    case "reward_chosen": return `${playerName(data.player)} chose ${data.choiceId}${data.outcome === 'backfire' ? ' — it backfired' : ''}.`;
+    case "reward_distributed": return data.amount === undefined ? `${playerName(data.player)} completed reward #${data.rewardId}.` : `${playerName(data.player)} distributed ${data.amount} to ${playerName(data.recipient)}.`;
+    case "shield_changed": return data.broken ? `${playerName(data.player)} lost their entire shield.` : `${playerName(data.player)} now has ${data.shield} shield points.`;
+    case "punishment_assigned": return `${playerName(data.player)} received a punishment of ${data.amount}${data.unit ? ` ${data.unit}` : ''}${data.reason === 'reward_cost' ? ' as a reward cost' : data.distributor ? ` from ${playerName(data.distributor)}` : " for a death"}.`;
     case "punishment_confirmed": return `${playerName(data.player)} confirmed a punishment of ${data.amount}.`;
     default: return `Game activity: ${type}.`;
   }

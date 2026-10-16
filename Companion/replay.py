@@ -243,11 +243,13 @@ class DiscoveryHistory:
 
 
 class LCU:
-    def __init__(self, network, league_dir=None, discovery=None, rng=None):
+    def __init__(self, network, league_dir=None, discovery=None, rng=None, cancel=None):
         self.network = network
         self.league_dir = Path(league_dir) if league_dir else None
         self.discovery = discovery if discovery is not None else DiscoveryHistory()
         self.rng = rng if rng is not None else secrets.SystemRandom()
+        self.cancel = cancel
+        self.objective_sources = {}
 
     def lockfile(self):
         cached = getattr(self, '_lockfile', None)
@@ -276,6 +278,8 @@ class LCU:
         raise ReplayError('League Client nicht gefunden. Einloggen oder League-Installationsordner angeben.')
 
     def request(self, method, route, body=None):
+        if self.cancel is not None and self.cancel.is_set():
+            raise ReplayError('Client-Vorgang abgebrochen.')
         if not route.startswith('/lol-') or '://' in route or '\\' in route or '..' in route:
             raise ReplayError('Ungültiger lokaler Client-Endpunkt.')
         try:
@@ -404,8 +408,26 @@ class LCU:
             scores = score_match(game, timeline)
         except ValueError as exc:
             raise ReplayError(str(exc)) from None
+        try:
+            from timeline import build_source
+            source = build_source(identity, game, timeline)
+            self.objective_sources[identity] = source
+            objective_status = {'status': 'ready', 'count': len(source['events'])}
+        except (ValueError, TypeError, KeyError, AttributeError):
+            self.objective_sources.pop(identity, None)
+            objective_status = {'status': 'unavailable', 'count': 0}
         return {'matchId': identity, 'gameVersion': v, 'patch': patch_of(v), 'mapId': 11,
-                'analysisStatus': 'ready', 'scores': scores}
+                'analysisStatus': 'ready', 'scores': scores, 'objectiveSource': objective_status}
+
+    def objective_source(self, identity):
+        from timeline import build_source
+        identity = match_id(identity)
+        if identity not in self.objective_sources:
+            gid = identity.split('_')[1]
+            self.objective_sources[identity] = build_source(identity,
+                self.request('GET', '/lol-match-history/v1/games/' + gid),
+                self.request('GET', '/lol-match-history/v1/game-timelines/' + gid))
+        return self.objective_sources[identity]
 
     def ensure_metadata(self, identity, game_version):
         gid = match_id(identity).split('_')[1]
@@ -461,6 +483,40 @@ class LCU:
     def acquire(self, cache, identity, game_version, cancel=None, timeout=120):
         path = self._download_path(identity, game_version, cancel, timeout)
         return cache.add(path, identity, game_version)
+
+    def local_replay_path(self, identity):
+        """Find an original client file, without decoding it or using the old cache."""
+        identity = match_id(identity)
+        directory = self.replay_dir()
+        for filename in (identity.replace('_', '-') + '.rofl', identity + '.rofl'):
+            path = directory / filename
+            if not path.is_symlink() and path.is_file() and 0 < path.stat().st_size <= MAX_FILE:
+                return path
+        return None
+
+    def watch_local(self, identity, game_version, cancel=None):
+        """Ask the logged-in League Client to play its own original replay file."""
+        identity = match_id(identity); game_version = client_version(game_version)
+        try:
+            summoner = self.request('GET', '/lol-summoner/v1/current-summoner')
+        except (ReplayError, RemoteError):
+            raise ReplayError('League öffnen und einloggen, um dieses Replay zu starten.') from None
+        if not isinstance(summoner, dict) or not isinstance(summoner.get('puuid'), str) or not summoner['puuid']:
+            raise ReplayError('League öffnen und einloggen, um dieses Replay zu starten.')
+        if patch_of(self.current_version()) != patch_of(game_version):
+            raise ReplayError('Wiedergabe nur mit kompatiblem Client-Patch.')
+        if self.local_replay_path(identity) is None:
+            raise ReplayError('Replay-Datei fehlt im League-Replay-Ordner. Erneut herunterladen.')
+        self.ensure_metadata(identity, game_version)
+        self.request('POST', '/lol-replays/v1/rofls/scan')
+        gid = identity.split('_')[1]
+        metadata = self.request('GET', '/lol-replays/v1/metadata/' + gid)
+        if not isinstance(metadata, dict) or metadata.get('state') not in ('watch', 'found'):
+            raise ReplayError('League bietet für dieses Replay noch keine Wiedergabe an. Client prüfen und erneut versuchen.')
+        if cancel is not None and cancel.is_set():
+            raise ReplayError('Wiedergabe abgebrochen.')
+        self.request('POST', f'/lol-replays/v1/rofls/{gid}/watch', {'componentType': 'replay-button_match-history'})
+        return {'message': 'Wiedergabe im League Client angefordert. Ein Replay garantiert keine LoL-Livedaten.'}
 
     def watch(self, cache, identity):
         item = cache.get(identity)

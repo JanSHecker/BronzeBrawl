@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { fixtureDatabase, Reward, scaledChoice, catalog } from './reward-fixtures';
 
 // Clearly synthetic audit fixtures, never uploaded to the public service.
 const roster = [
@@ -126,14 +127,27 @@ test("two isolated players complete the secured gameflow and recover after failu
     await blue.route("**/api/Status?*", route => route.fulfill({ status: 503, contentType: "application/json", body: '{"message":"synthetic transient failure"}' }), { times: 1 });
     await expect(blue.getByRole("alert")).toContainText("synthetic transient failure");
     await expect(blue.getByRole("alert")).toHaveCount(0);
+    // Deterministic synthetic offer; the choice and all distribution still use real HTTP.
+    const credentials = await blue.evaluate(() => {
+      const active = JSON.parse(sessionStorage.getItem('bb:active'));
+      return { ...active, token: sessionStorage.getItem(`bb:player:${active.gameId}:${active.playerId}`) };
+    });
+    const statusResponse = await blue.request.get('/api/Status', { params: { playerId: credentials.playerId }, headers: { 'X-Player-Token': credentials.token } });
+    const status = await statusResponse.json();
+    const database = await fixtureDatabase();
+    try {
+      const choice = scaledChoice(catalog.pools.standard.find(row => row.id === 'marked'), 'baseline', catalog);
+      await database.getRepository(Reward).update(status.rewards[0].rewardId, { openedAt: new Date(), choices: [choice] });
+    } finally { await database.destroy(); }
+    await blue.reload();
     await blue.getByRole('button', { name: 'Kills chest, 1 available' }).click();
-    await blue.getByRole('button', { name: 'Open', exact: true }).click();
-    await blue.getByRole('button', { name: '9 Assign sips' }).click();
-    await blue.getByRole('button', { name: /Audit Alex Garen/ }).click();
-    await blue.getByRole('button', { name: 'Confirm', exact: true }).click();
+    await blue.getByRole('button', { name: 'Marked', exact: true }).click();
+    await blue.getByRole('button', { name: /Give 1 sips to Audit Alex/ }).click();
+    await blue.getByRole('button', { name: /Give 1 sips to Audit Alex/ }).click();
+    await expect(blue.getByText('Complete', { exact: true })).toBeVisible();
     await blue.getByRole('button', { name: 'Done', exact: true }).click();
     await expect(blue.getByRole('button', { name: 'Kills chest, 0 available' })).toBeDisabled();
-    for (let remaining = 16; remaining > 0; remaining--) {
+    for (let remaining = 9; remaining > 0; remaining--) {
       const counter = red.getByRole('button', { name: `${remaining} sips remaining. Tap to subtract one.` });
       await expect(counter).toBeEnabled();
       await counter.click();

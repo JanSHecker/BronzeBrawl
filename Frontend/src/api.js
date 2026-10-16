@@ -45,8 +45,10 @@ export function errorMessage(error, fallback = "Request failed. Please try again
   return error?.message || fallback;
 }
 export const validId = value => typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+export const normalizeGameCode = value => typeof value === "string" ? value.trim().toUpperCase() : "";
+export const validGameCode = value => typeof value === "string" && /^[A-Z]{4}$/.test(value);
 export function validateGame(game) {
-  if (!isJsonObject(game) || !validId(game.gameId) || !/^[a-f0-9]{64}$/i.test(game.hostToken || "")) throw new Error("Invalid game response");
+  if (!isJsonObject(game) || !validId(game.gameId) || !validGameCode(game.gameCode) || !/^[a-f0-9]{64}$/i.test(game.hostToken || "")) throw new Error("Invalid game response");
   return game;
 }
-export const inviteUrl = gameId => validId(gameId) ? new URL(`/name/${gameId}`, window.location.origin).href : "";
+export const inviteUrl = gameCode => validGameCode(gameCode) ? new URL(`/name/${gameCode}`, window.location.origin).href : "";

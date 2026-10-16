@@ -24,6 +24,34 @@ test("old replay entry redirects to companion without replay UI or localhost acc
   expect(feedRequests).toEqual([]);
 });
 
+test("two tabs join different games in the same browser context", async ({ context, page }) => {
+  const create = async () => {
+    const response = await page.request.get("/api/runGame", { params: { punishmentAmount: 3, rewardAmount: 5 } });
+    expect(response.ok()).toBe(true);
+    return response.json();
+  };
+  const first = await create();
+  const second = await create();
+  expect(first.gameCode).toMatch(/^[A-Z]{4}$/);
+  expect(second.gameCode).not.toBe(first.gameCode);
+  const other = await context.newPage();
+  try {
+    await page.goto(`/name/${first.gameCode}`);
+    await page.getByLabel("What is your name?").fill("Audit Alice");
+    await other.goto(`/name/${second.gameCode}`);
+    await other.getByLabel("What is your name?").fill("Audit Bob");
+    await other.evaluate(id => localStorage.setItem("GameID", id), String(second.gameId));
+    for (const [tab, game] of [[page, first], [other, second]]) {
+      const response = tab.waitForResponse(response => response.url().endsWith("/api/createPlayer") && response.request().method() === "POST");
+      await tab.getByRole("button", { name: "START", exact: true }).click();
+      expect((await (await response).json()).game).toBe(game.gameId);
+      await expect(tab).toHaveURL(/\/team$/);
+      const active = await tab.evaluate(() => JSON.parse(sessionStorage.getItem("bb:active")));
+      expect(active).toMatchObject({ gameId: game.gameId, gameCode: game.gameCode });
+    }
+  } finally { await other.close(); }
+});
+
 test("two isolated players complete the secured gameflow and recover after failure/reload", async ({ browser, page }) => {
   const errors = [];
   const watch = async tab => {
@@ -32,10 +60,9 @@ test("two isolated players complete the secured gameflow and recover after failu
   };
   await watch(page);
   await page.goto("/");
-  const inputs = page.getByRole("textbox");
+  const inputs = page.locator("form").filter({ has: page.getByRole("button", { name: "CREATE", exact: true }) }).getByRole("textbox");
   await inputs.nth(0).fill("7");
   await inputs.nth(1).fill("9");
-  await inputs.nth(2).fill("2");
   await page.getByRole("button", { name: "CREATE", exact: true }).click();
   const invite = page.locator('a[href*="/name/"]');
   await expect(invite).toBeVisible();
@@ -56,10 +83,10 @@ test("two isolated players complete the secured gameflow and recover after failu
   });
   expect(heartbeat.ok()).toBe(true);
   await expect(page.getByTestId('live-feed-status')).toContainText('verbunden – warte auf LoL');
-  const upload = async () => {
+  const upload = async (gameTime = 20) => {
     const response = await page.request.post("/api/companion/input", {
       headers: { "X-Companion-Token": connection.token },
-      data: { gameId: host.gameId, input: { allPlayers: roster, events: { Events: events }, gameData: { gameTime: 20, mapNumber: 11 } } },
+      data: { gameId: host.gameId, input: { allPlayers: roster, events: { Events: events }, gameData: { gameTime, mapNumber: 11 } } },
     });
     expect(response.ok(), await response.text()).toBe(true);
   };
@@ -76,7 +103,7 @@ test("two isolated players complete the secured gameflow and recover after failu
     for (const tab of [blue, red]) {
       await watch(tab);
       await tab.goto(url);
-      await tab.getByRole("textbox").fill("Audit Alex");
+      await tab.getByLabel("What is your name?").fill("Audit Alex");
       await tab.getByRole("button", { name: "START", exact: true }).click();
       await expect(tab).toHaveURL(/\/team$/);
       await expect(tab.getByRole("button", { name: "READY" })).toBeDisabled();
@@ -114,16 +141,20 @@ test("two isolated players complete the secured gameflow and recover after failu
     await expect(red.getByRole('button', { name: '0 sips remaining. Tap to subtract one.' })).toBeDisabled();
     events.push(kill(2));
     await upload();
+    await expect(blue).toHaveURL(/\/status$/);
+    await expect(blue.getByText("3:00", { exact: true })).toBeVisible();
+    await upload(200);
     await expect(blue).toHaveURL(/\/champion$/);
     await blue.getByRole("img", { name: "Lux", exact: true }).click();
     await expect(blue).toHaveURL(/\/status$/);
+    await expect(blue.getByText("3:00", { exact: true })).toBeVisible();
     await blue.reload();
     await expect(blue.getByText("0/0/2", { exact: true })).toBeVisible();
     events.push(kill(3, "Turret_T200_L0_P3"));
-    await upload();
-    events.push({ EventID: 4, EventName: "GameEnd", EventTime: 20 });
-    await upload();
-    await upload();
+    await upload(200);
+    events.push({ EventID: 4, EventName: "GameEnd", EventTime: 200 });
+    await upload(200);
+    await upload(200);
     await expect(blue.getByRole("status")).toHaveText("Game ended");
     await expect(red.getByRole("status")).toHaveText("Game ended");
     expect(errors).toEqual([]);

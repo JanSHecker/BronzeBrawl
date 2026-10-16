@@ -9,8 +9,8 @@ for (const [width, height] of [[320, 480], [320, 568], [360, 640], [390, 844]]) 
     const punishment = { punishmentId: 8, amount: 2, remainingAmount: 2, unit: 'sips', recieved: false };
     const status = {
       player: { playerName: 'Alex' }, champion: { championId: 1, championName: 'Yasuo' },
-      team: { teamId: 1, teamName: 0 }, rotationMode: 'Kills',
-      gameState: 'live', feedStale: false, counter: [3, 3], kda: [8, 5, 12],
+      team: { teamId: 1, teamName: 0 }, rotationRemainingSeconds: 138, rotationAvailable: false,
+      gameState: 'live', feedStale: false, kda: [8, 5, 12],
       rewards: [chest], punishments: [punishment],
       enemyTeam: [{ championId: 2, championName: 'Garen', player: { playerId: 2, playerName: 'Sam' } }],
     };

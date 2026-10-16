@@ -5,9 +5,14 @@ import StatusPage from "./StatusPage/StatusPage";
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 import CreationPage from "./CreationPage/CreationPage";
 import CompanionPage from "./CompanionPage/CompanionPage";
+import LogPage from "./ActivityLog/LogPage";
 import { LiveFeedProvider } from "./LoLApi/LiveFeed";
 
 const router = createBrowserRouter([
+  {
+    path: "/log",
+    element: <LogPage />,
+  },
   {
     path: "/replays",
     element: <Navigate to="/companion" replace />,

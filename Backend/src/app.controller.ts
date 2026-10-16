@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, HttpException, HttpStatus, Optional, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Get, Headers, HttpException, HttpStatus, Optional, Post, Query, Res, UseGuards } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { Response } from 'express';
@@ -12,6 +12,7 @@ import { DistributionService } from './distribution.service';
 import { TeamService } from './team.service';
 import { GameflowService } from './gameflow.service';
 import { checkDatabaseReadiness } from './database/readiness';
+import { JoinRateLimitGuard } from './join-rate-limit.guard';
 
 @Controller()
 export class AppController {
@@ -70,21 +71,18 @@ export class AppController {
   async runGame(
     @Query('punishmentAmount') punishmentAmount,
     @Query('rewardAmount') rewardAmount,
-    @Query('rotationMode') rotationMode,
-    @Query('defaultCounter') defaultCounter,
   ) {
     if (this.gameflow) {
       return this.gameflow.runGame({
         punishmentAmount: this.integerQuery(punishmentAmount, 'punishmentAmount'),
         rewardAmount: this.integerQuery(rewardAmount, 'rewardAmount'),
-        rotationMode,
-        defaultCounter: this.integerQuery(defaultCounter, 'defaultCounter'),
       });
     }
     return this.gameflowUnavailable();
   }
 
   @Post('createPlayer')
+  @UseGuards(JoinRateLimitGuard)
   async createPlayer(@Body() playerData) {
     if (this.gameflow) return this.gameflow.createPlayer(playerData);
     return this.gameflowUnavailable();
@@ -154,12 +152,6 @@ export class AppController {
     return this.gameflowUnavailable();
   }
 
-  @Get('getChangeCounters')
-  async getChangeCounter(@Query('id') playerId, @Headers('x-player-token') token: string) {
-    if (this.gameflow) return this.gameflow.getChangeCounters(this.integerQuery(playerId, 'playerId'), token);
-    return this.gameflowUnavailable();
-  }
-
   @Get('Status')
   async getStatus(@Query('playerId') playerId, @Headers('x-player-token') token: string) {
     if (this.gameflow) return this.gameflow.status(this.integerQuery(playerId, 'playerId'), token);
@@ -167,8 +159,29 @@ export class AppController {
   }
 
   @Get('getSettings')
-  async getSettings(@Query('gameId') gameId) {
-    if (this.gameflow) return this.gameflow.getSettings(this.integerQuery(gameId, 'gameId'));
+  @UseGuards(JoinRateLimitGuard)
+  async getSettings(@Query('gameCode') gameCode) {
+    if (this.gameflow) return this.gameflow.getSettingsByCode(gameCode);
+    return this.gameflowUnavailable();
+  }
+
+  @Get('gameActivity')
+  async getGameActivity(
+    @Query() query: Record<string, unknown>,
+    @Headers('x-game-token') hostToken: string,
+    @Headers('x-player-token') playerToken: string,
+  ) {
+    if (!this.gameflow) return this.gameflowUnavailable();
+    const optional = (field: string) => query[field] === undefined ? undefined : this.integerQuery(query[field], field);
+    return this.gameflow.getActivity({
+      gameId: this.integerQuery(query.gameId, 'gameId'), playerId: optional('playerId'),
+      before: optional('before'), after: optional('after'), limit: optional('limit'),
+    }, { hostToken, playerToken });
+  }
+
+  @Get('getInvitation')
+  async getInvitation(@Query('gameId') gameId, @Headers('x-game-token') token: string) {
+    if (this.gameflow) return this.gameflow.getInvitation(this.integerQuery(gameId, 'gameId'), token);
     return this.gameflowUnavailable();
   }
 

@@ -13,11 +13,12 @@ import { Event } from './entities/event.entity';
 import { Takedown } from './entities/takedown.entity';
 import { Reward } from './entities/reward.entity';
 import { Punishment } from './entities/punishment.entity';
+import { ActivityLog } from './entities/activity-log.entity';
 
 // A missing implementation is a behavioral failure, not a TypeScript import failure.
 let Service: any;
 try { Service = require('./gameflow.service').GameflowService; } catch { Service = class {}; }
-const keys = new Map<any, string>([[Game,'gameId'],[Player,'playerId'],[Team,'teamId'],[Champion,'championId'],[Event,'eventId'],[Takedown,'takedownId'],[Reward,'rewardId'],[Punishment,'punishmentId']]);
+const keys = new Map<any, string>([[Game,'gameId'],[Player,'playerId'],[Team,'teamId'],[Champion,'championId'],[Event,'eventId'],[Takedown,'takedownId'],[Reward,'rewardId'],[Punishment,'punishmentId'],[ActivityLog,'activityId']]);
 function matches(row: any, where: any): boolean {
   if (Array.isArray(where)) return where.some(w => matches(row,w));
   return Object.entries(where || {}).every(([k,v]) => v && typeof v === 'object' ? matches(row[k] || {},v) : row[k] === v);
@@ -57,13 +58,13 @@ const roster = [
 ];
 const kill=(id=1,killer='Alice#EUW',victim='Bob#EUW')=>({EventID:id,EventName:'ChampionKill',EventTime:id,KillerName:killer,VictimName:victim,Assisters:['Assist#EUW']});
 const feed=(events: any[]=[],time=10)=>({allPlayers:structuredClone(roster),events:{Events:events},gameData:{gameTime:time,gameMode:'CLASSIC',mapNumber:11}});
-const settings={punishmentAmount:7,rewardAmount:9,defaultCounter:2,rotationMode:'Kills'};
+const settings={punishmentAmount:7,rewardAmount:9};
 let db: MemoryDB, service: any, game: any, a: any, b: any, teams: any, champions: any;
 async function setup() {
   game=await service.runGame(settings);
   await service.ingest({gameId:game.gameId,input:feed()},game.hostToken);
-  a=await service.createPlayer({playerName:'Alex',game:game.gameId});
-  b=await service.createPlayer({playerName:'Alex',game:game.gameId});
+  a=await service.createPlayer({playerName:'Alex',gameCode:game.gameCode});
+  b=await service.createPlayer({playerName:'Alex',gameCode:game.gameCode});
   teams=(await service.getTeams(game.gameId)).teams;
   champions=await service.getAllChampions(game.gameId);
   await service.joinTeam({player:a.playerId,team:teams[0].teamId},a.playerToken);
@@ -74,7 +75,7 @@ async function setup() {
 beforeEach(()=>{db=new MemoryDB(); service=new Service(db as any);});
 describe('mystery chest foundation', () => {
   async function supporter() {
-    const player = await service.createPlayer({ playerName: 'Support', game: game.gameId });
+    const player = await service.createPlayer({ playerName: 'Support', gameCode: game.gameCode });
     await service.joinTeam({ player: player.playerId, team: teams[0].teamId }, player.playerToken);
     await service.chooseChampion({ player: player.playerId, champion: champions[1].championId }, player.playerToken);
     return player;
@@ -98,7 +99,7 @@ describe('mystery chest foundation', () => {
 
   test('all six objective events reward every joined teammate, including players without champions', async () => {
     await setup();
-    const teammate = await service.createPlayer({ playerName: 'Waiting teammate', game: game.gameId });
+    const teammate = await service.createPlayer({ playerName: 'Waiting teammate', gameCode: game.gameCode });
     await service.joinTeam({ player: teammate.playerId, team: teams[0].teamId }, teammate.playerToken);
     const events = ['TurretKilled', 'HordeKill', 'HeraldKill', 'DragonKill', 'DragonKill', 'BaronKill'].map((EventName, i) => ({
       EventID: i + 1, EventTime: i + 1, EventName, KillerName: 'Alice#EUW',
@@ -115,7 +116,9 @@ describe('mystery chest foundation', () => {
     }
     expect((await service.status(b.playerId, b.playerToken)).rewards).toHaveLength(0);
     expect(db.all(Reward)).toHaveLength(12);
-    const late = await service.createPlayer({ playerName: 'Late join', game: game.gameId });
+    const history = await service.getActivity({ gameId: game.gameId, limit: 100 }, { hostToken: game.hostToken });
+    expect(history.items.filter(row => row.type === 'reward_earned')).toHaveLength(12);
+    const late = await service.createPlayer({ playerName: 'Late join', gameCode: game.gameCode });
     await service.joinTeam({ player: late.playerId, team: teams[0].teamId }, late.playerToken);
     await service.ingest({ gameId: game.gameId, input }, game.hostToken);
     expect((await service.status(late.playerId, late.playerToken)).rewards).toHaveLength(0);
@@ -188,10 +191,100 @@ describe('mystery chest foundation', () => {
       await expect(service.consumePunishment({ id: item.punishmentId, expectedRemaining: 1 }, a.playerToken)).rejects.toMatchObject({ status: 409 });
       expect((await service.status(a.playerId, a.playerToken)).punishmentTotals[unit]).toBe(0);
     }
+    const history = await service.getActivity({ gameId: game.gameId, limit: 100 }, { hostToken: game.hostToken });
+    const confirmations = history.items.filter(row => row.type === 'punishment_confirmed');
+    expect(confirmations).toHaveLength(6);
+    expect(confirmations.every(row => row.data.amount === 1 && ['sips', 'shots', 'chugs'].includes(row.data.unit))).toBe(true);
   });
 
 });
 describe('gameflow contract',()=>{
+  test('activity history captures gameplay, consequences, confirmations and end exactly once', async () => {
+    await setup();
+    const input = feed([kill()], 12);
+    await service.ingest({ gameId: game.gameId, input }, game.hostToken);
+    const reward = (await service.status(a.playerId, a.playerToken)).rewards[0];
+    const assigned = await service.confirmReward({ id: reward.rewardId, punishment: { recipient: { playerId: b.playerId } } }, a.playerToken);
+    await service.confirmPunishment({ id: assigned.punishmentId }, b.playerToken);
+    await service.confirmPunishment({ id: assigned.punishmentId }, b.playerToken);
+    service = new Service(db as any);
+    await service.ingest({ gameId: game.gameId, input }, game.hostToken);
+    await service.ingest({ gameId: game.gameId, input: feed([kill(), { EventID: 2, EventName: 'GameEnd', EventTime: 13 }], 13) }, game.hostToken);
+    const history = await service.getActivity({ gameId: game.gameId, limit: 100 }, { hostToken: game.hostToken });
+    const types = history.items.map(item => item.type);
+    for (const type of ['game_created', 'game_started', 'champion_killed', 'reward_earned', 'reward_distributed', 'punishment_confirmed', 'game_ended']) {
+      expect(types.filter(value => value === type)).toHaveLength(1);
+    }
+    expect(types.filter(value => value === 'punishment_assigned')).toHaveLength(2);
+    expect(history.items.find(item => item.type === 'champion_killed')).toMatchObject({
+      gameTime: 1, data: { killer: { championName: 'Ahri' }, victim: { championName: 'Garen' }, assisters: [{ championName: 'Lux' }] },
+    });
+    expect(JSON.stringify(history)).not.toMatch(/Token|Hash|feedSnapshot/);
+  });
+
+  test('activity has scoped authorization and stable bidirectional cursor pagination after restart', async () => {
+    await setup();
+    const other = await service.runGame(settings);
+    await expect(service.getActivity({ gameId: game.gameId }, {})).rejects.toMatchObject({ status: 403 });
+    await expect(service.getActivity({ gameId: other.gameId, playerId: a.playerId }, { playerToken: a.playerToken })).rejects.toMatchObject({ status: 403 });
+    await expect(service.getActivity({ gameId: game.gameId }, { hostToken: other.hostToken })).rejects.toMatchObject({ status: 403 });
+    const auth = { playerToken: a.playerToken };
+    const query = { gameId: game.gameId, playerId: a.playerId, limit: 2 };
+    const first = await service.getActivity(query, auth);
+    const older = await service.getActivity({ ...query, before: first.nextCursor }, auth);
+    expect(first.items[1].activityId).toBeGreaterThan(older.items[0].activityId);
+    const newest = first.items[0].activityId;
+    await service.ingest({ gameId: game.gameId, input: feed([kill()], 12) }, game.hostToken);
+    service = new Service(db as any);
+    const newer = await service.getActivity({ ...query, after: newest }, auth);
+    expect(newer.items[0].activityId).toBeGreaterThan(newest);
+    expect(newer.nextCursor).not.toBeNull();
+    for (const invalid of [{ limit: 101 }, { before: -1 }, { after: 0 }, { before: 1, after: 2 }]) {
+      await expect(service.getActivity({ ...query, ...invalid }, auth)).rejects.toMatchObject({ status: 400 });
+    }
+  });
+
+  test('activity writes roll back with game changes, and activity failure rolls back the action', async () => {
+    await setup();
+    const count = db.all(ActivityLog).length;
+    db.failOn = Reward;
+    await expect(service.ingest({ gameId: game.gameId, input: feed([kill()]) }, game.hostToken)).rejects.toThrow('injected');
+    expect(db.all(ActivityLog)).toHaveLength(count);
+    db.failOn = ActivityLog;
+    await expect(service.ingest({ gameId: game.gameId, input: feed([kill()]) }, game.hostToken)).rejects.toThrow('injected');
+    expect(db.all(Event)).toHaveLength(0);
+    expect(db.all(ActivityLog)).toHaveLength(count);
+  });
+
+  test('no-op team joins do not log twice, and departed player snapshots survive deletion', async () => {
+    game = await service.runGame(settings);
+    a = await service.createPlayer({ playerName: 'Original name', gameCode: game.gameCode });
+    teams = (await service.getTeams(game.gameId)).teams;
+    await service.joinTeam({ player: a.playerId, team: teams[0].teamId }, a.playerToken);
+    await service.joinTeam({ player: a.playerId, team: teams[0].teamId }, a.playerToken);
+    db.all(Player)[0].playerName = 'Changed name';
+    await service.deletePlayer({ id: a.playerId }, a.playerToken);
+    const { items } = await service.getActivity({ gameId: game.gameId }, { hostToken: game.hostToken });
+    expect(items.filter(item => item.type === 'team_changed')).toHaveLength(1);
+    expect(items.find(item => item.type === 'player_joined').data.player.playerName).toBe('Original name');
+    expect(items.find(item => item.type === 'player_left').data.player.playerName).toBe('Changed name');
+  });
+
+  test('activity distinguishes initial champion selection, rotation and environment deaths', async () => {
+    await setup();
+    await service.ingest({ gameId: game.gameId, input: feed([kill(1, 'Turret_T200_L0_P3')], 190) }, game.hostToken);
+    await service.chooseChampion({ player: a.playerId, champion: champions[1].championId }, a.playerToken);
+    const { items } = await service.getActivity({ gameId: game.gameId }, { hostToken: game.hostToken });
+    expect(items.find(item => item.type === 'champion_rotated')).toMatchObject({
+      gameTime: 190, data: { previousChampion: { championName: 'Ahri' }, champion: { championName: 'Lux' } },
+    });
+    expect(items.find(item => item.type === 'champion_killed')).toMatchObject({
+      data: { killer: null, environment: 'Turret_T200_L0_P3', victim: { championName: 'Garen' } },
+    });
+    expect(items.filter(item => item.type === 'champion_selected')).toHaveLength(2);
+    expect(items.filter(item => item.type === 'reward_earned')).toHaveLength(0);
+  });
+
   test('HTTP accepts and ingests a valid event history above 100 KiB with authorization and idempotency intact', async () => {
     const module = await Test.createTestingModule({
       controllers: [CompanionController],
@@ -257,7 +350,7 @@ describe('gameflow contract',()=>{
   });
   test('start immediately persists exactly two semantic teams without a feed',async()=>{
     const g=await service.runGame(settings);
-    expect(g).toMatchObject({gameId:1,state:'waiting_for_feed',settings:{punishmentAmount:7,rewardAmount:9,defaultCounter:2}});
+    expect(g).toMatchObject({gameId:1,state:'waiting_for_feed',settings:{punishmentAmount:7,rewardAmount:9,rotationDurationSeconds:180}});
     expect(g.hostToken).toMatch(/^[a-f0-9]{64}$/);
     expect(db.all(Team).map(t=>t.teamName)).toEqual([0,1]);
     expect(db.all(Game)[0].hostTokenHash).not.toBe(g.hostToken);
@@ -267,7 +360,13 @@ describe('gameflow contract',()=>{
     await expect(service.runGame({...settings,rewardAmount:value})).rejects.toMatchObject({status:400});
     expect(db.all(Game)).toHaveLength(0);
   });
-  test('rejects invalid mode',async()=>{await expect(service.runGame({...settings,rotationMode:'Cheat'})).rejects.toMatchObject({status:400});});
+  test.each(['Kills', 'Deaths', 'Cheat'])('obsolete mode %s cannot enable a different rotation rule', async rotationMode => {
+    const created = await service.runGame({ ...settings, rotationMode, defaultCounter: 1 });
+    expect(created.rotationDurationSeconds).toBe(180);
+    expect(created).not.toHaveProperty('rotationMode');
+    expect(created).not.toHaveProperty('defaultRotationCounter');
+    expect(created.settings).not.toHaveProperty('defaultCounter');
+  });
   test('requires host capability and valid complete input',async()=>{
     const g=await service.runGame(settings);
     await expect(service.ingest({gameId:g.gameId,input:feed()},'wrong')).rejects.toMatchObject({status:403});
@@ -280,7 +379,7 @@ describe('gameflow contract',()=>{
     service=new Service(db as any);
     await service.ingest({gameId:game.gameId,input},game.hostToken);
     const s=await service.status(a.playerId,a.playerToken);
-    expect(s).toMatchObject({kda:[2,0,0],counter:[0,2],gameState:'live',feedStale:false,enemyTeamId:teams[1].teamId,rotationMode:'Kills'});
+    expect(s).toMatchObject({kda:[2,0,0],rotationRemainingSeconds:178,rotationAvailable:false,gameState:'live',feedStale:false,enemyTeamId:teams[1].teamId});
     expect(s.rewards.map(r=>r.amount)).toEqual([9,9]);
     expect((await service.status(b.playerId,b.playerToken)).punishments.map(p=>p.amount)).toEqual([7,7]);
     expect(await service.kda(champions[1].championId)).toEqual([0,0,2]);
@@ -304,7 +403,7 @@ describe('gameflow contract',()=>{
     await setup(); await service.ingest({gameId:game.gameId,input:feed([kill(1,'Turret_T200_L0_P3')])},game.hostToken);
     expect(db.all(Reward)).toHaveLength(0);
     expect(db.all(Takedown)[0].killer).toBeNull();
-    expect((await service.status(b.playerId,b.playerToken))).toMatchObject({counter:[2,1],kda:[0,1,0]});
+    expect((await service.status(b.playerId,b.playerToken))).toMatchObject({rotationRemainingSeconds:180,kda:[0,1,0]});
   });
   test('rolls back every consequence and retries the same event after write failure',async()=>{
     await setup(); db.failOn=Reward;
@@ -312,7 +411,7 @@ describe('gameflow contract',()=>{
     expect(db.all(Event)).toHaveLength(0); expect(db.all(Takedown)).toHaveLength(0); expect(db.all(Punishment)).toHaveLength(0);
     await service.ingest({gameId:game.gameId,input:feed([kill()])},game.hostToken);
     expect(db.all(Reward)).toHaveLength(1);
-    expect((await service.status(a.playerId,a.playerToken)).counter).toEqual([1,2]);
+    expect((await service.status(a.playerId,a.playerToken)).rotationRemainingSeconds).toBe(180);
   });
   test('rejects invalid victim with no partial writes',async()=>{
     await setup(); await expect(service.ingest({gameId:game.gameId,input:feed([kill(1,'Alice','Unknown')])},game.hostToken)).rejects.toMatchObject({status:400});
@@ -330,39 +429,113 @@ describe('gameflow contract',()=>{
     for(const fn of [()=>service.status(a.playerId,b.playerToken),()=>service.joinTeam({player:a.playerId,team:teams[1].teamId},b.playerToken),()=>service.chooseChampion({player:a.playerId,champion:champions[1].championId},b.playerToken),()=>service.deletePlayer({id:a.playerId},b.playerToken)]) await expect(fn()).rejects.toMatchObject({status:403});
     expect(JSON.stringify(await service.getTeams(game.gameId))).not.toMatch(/Token|feedSnapshot/);
   });
-  test('team changes with a champion and same-champion counter resets are conflicts',async()=>{
+  test('team changes with a champion and same-champion timer resets are conflicts',async()=>{
     await setup();
     await expect(service.joinTeam({player:a.playerId,team:teams[1].teamId},a.playerToken)).rejects.toMatchObject({status:409});
     await expect(service.chooseChampion({player:a.playerId,champion:champions[0].championId},a.playerToken)).rejects.toMatchObject({status:409});
     await expect(service.chooseChampion({player:a.playerId,champion:champions[1].championId},a.playerToken)).rejects.toMatchObject({status:409});
   });
-  test('allows rotation only after configured counter is exhausted',async()=>{
-    await setup(); await service.ingest({gameId:game.gameId,input:feed([kill(1),kill(2)])},game.hostToken);
-    await service.chooseChampion({player:a.playerId,champion:champions[1].championId,killCounter:999},a.playerToken);
-    const s=await service.status(a.playerId,a.playerToken); expect(s.counter).toEqual([2,2]); expect(s.champion.championId).toBe(champions[1].championId);
+  test('kills and deaths never unlock rotation or reset either champion timer',async()=>{
+    await setup();
+    await service.ingest({gameId:game.gameId,input:feed([kill(1),kill(2),kill(3,'Bob#EUW','Alice#EUW')],30)},game.hostToken);
+    for (const player of [a,b]) {
+      expect(await service.status(player.playerId,player.playerToken)).toMatchObject({rotationRemainingSeconds:160,rotationAvailable:false});
+    }
+    await expect(service.chooseChampion({player:a.playerId,champion:champions[1].championId,killCounter:0},a.playerToken)).rejects.toMatchObject({status:409});
   });
-  test('uses the configured death counter for Deaths rotation and ignores a forged amount',async()=>{
-    const deathSettings={...settings,rotationMode:'Deaths',defaultCounter:3};
-    const g=await service.runGame(deathSettings);
-    await service.ingest({gameId:g.gameId,input:feed([],10)},g.hostToken);
-    const first=await service.createPlayer({playerName:'First',game:g.gameId});
-    const second=await service.createPlayer({playerName:'Second',game:g.gameId});
-    const gameTeams=(await service.getTeams(g.gameId)).teams;
-    const gameChampions=await service.getAllChampions(g.gameId);
-    await service.joinTeam({player:first.playerId,team:gameTeams[0].teamId},first.playerToken);
-    await service.joinTeam({player:second.playerId,team:gameTeams[1].teamId},second.playerToken);
-    await service.chooseChampion({player:first.playerId,champion:gameChampions.blue[0].championId},first.playerToken);
-    await service.chooseChampion({player:second.playerId,champion:gameChampions.red[0].championId},second.playerToken);
-    await service.ingest({gameId:g.gameId,input:feed([
-      kill(1,'Bob#EUW','Alice#EUW'), kill(2,'Bob#EUW','Alice#EUW'), kill(3,'Bob#EUW','Alice#EUW'),
-    ],13)},g.hostToken);
-    await service.chooseChampion({player:first.playerId,champion:gameChampions.blue[1].championId,counter:999},first.playerToken);
-    expect(await service.status(first.playerId,first.playerToken)).toMatchObject({counter:[3,3],champion:{championId:gameChampions.blue[1].championId}});
+  test('time rotation fixes the duration server-side without requiring a kill/death counter', async () => {
+    await setup();
+    expect(await service.getSettings(game.gameId)).toMatchObject({
+      rotationDurationSeconds: 180,
+      settings: { rotationDurationSeconds: 180 },
+    });
+    const status = await service.status(a.playerId, a.playerToken);
+    expect(status).not.toHaveProperty('counter');
+    expect(status).not.toHaveProperty('rotationMode');
+    expect(status).toMatchObject({
+      rotationAvailable: false, rotationRemainingSeconds: 180,
+      champion: { rotationEndsAtGameTime: 190 },
+    });
+    await expect(service.chooseChampion({ player: a.playerId, champion: champions[1].championId, counter: 0 }, a.playerToken))
+      .rejects.toMatchObject({ status: 409 });
+  });
+  test('time rotation expires at exactly three game minutes, resets on takeover and clears the old timer', async () => {
+    await setup();
+    await service.ingest({ gameId: game.gameId, input: feed([], 189.5) }, game.hostToken);
+    expect(await service.status(a.playerId, a.playerToken)).toMatchObject({ rotationRemainingSeconds: 0.5, rotationAvailable: false });
+    await expect(service.chooseChampion({ player: a.playerId, champion: champions[1].championId }, a.playerToken))
+      .rejects.toMatchObject({ status: 409 });
+    await service.ingest({ gameId: game.gameId, input: feed([], 190) }, game.hostToken);
+    expect(await service.status(a.playerId, a.playerToken)).toMatchObject({ rotationRemainingSeconds: 0, rotationAvailable: true });
+    await expect(service.chooseChampion({ player: a.playerId, champion: champions[0].championId }, a.playerToken))
+      .rejects.toMatchObject({ status: 409 });
+    const selected = await service.chooseChampion({ player: a.playerId, champion: champions[1].championId, rotationEndsAtGameTime: 99999 }, a.playerToken);
+    expect(selected.rotationEndsAtGameTime).toBe(370);
+    const all = await service.getAllChampions(game.gameId);
+    expect(all.blue[0]).toMatchObject({ player: null, rotationEndsAtGameTime: null });
+    const third = await service.createPlayer({ playerName: 'Third', gameCode: game.gameCode });
+    await service.joinTeam({ player: third.playerId, team: teams[0].teamId }, third.playerToken);
+    await service.ingest({ gameId: game.gameId, input: feed([], 200) }, game.hostToken);
+    await service.chooseChampion({ player: third.playerId, champion: champions[0].championId }, third.playerToken);
+    expect(await service.status(third.playerId, third.playerToken)).toMatchObject({ rotationRemainingSeconds: 180, champion: { rotationEndsAtGameTime: 380 } });
+    expect(await service.status(a.playerId, a.playerToken)).toMatchObject({ rotationRemainingSeconds: 170, champion: { rotationEndsAtGameTime: 370 } });
+  });
+  test('time rotation survives restart and unchanged clocks without using wall time or combat counters', async () => {
+    await setup();
+    await service.ingest({ gameId: game.gameId, input: feed([kill(1), kill(2)], 30) }, game.hostToken);
+    service = new Service(db as any);
+    // Even an old/stale feed never advances the game clock by itself.
+    db.all(Game)[0].lastFeedAt = new Date(0);
+    expect(await service.status(a.playerId, a.playerToken)).toMatchObject({ feedStale: true, rotationRemainingSeconds: 160, rotationAvailable: false });
+    await service.ingest({ gameId: game.gameId, input: feed([kill(1), kill(2)], 30) }, game.hostToken);
+    expect(await service.status(a.playerId, a.playerToken)).toMatchObject({ rotationRemainingSeconds: 160, rotationAvailable: false });
+  });
+  test('future deadline adjustments extend or shorten only the affected champion', async () => {
+    await setup();
+    const champion = db.all(Champion).find(row => row.championId === champions[0].championId);
+    champion.rotationEndsAtGameTime += 60;
+    expect(await service.status(a.playerId, a.playerToken)).toMatchObject({ rotationRemainingSeconds: 240, rotationAvailable: false });
+    expect(await service.status(b.playerId, b.playerToken)).toMatchObject({ rotationRemainingSeconds: 180 });
+    await service.ingest({ gameId: game.gameId, input: feed([], 190) }, game.hostToken);
+    expect(await service.status(a.playerId, a.playerToken)).toMatchObject({ rotationRemainingSeconds: 60, rotationAvailable: false });
+    // A shortening effect can expire a timer immediately; status and selection agree.
+    db.all(Champion).find(row => row.championId === champions[0].championId).rotationEndsAtGameTime -= 90;
+    expect(await service.status(a.playerId, a.playerToken)).toMatchObject({ rotationRemainingSeconds: 0, rotationAvailable: true });
+    await service.chooseChampion({ player: a.playerId, champion: champions[1].championId }, a.playerToken);
+    expect(await service.status(a.playerId, a.playerToken)).toMatchObject({ rotationRemainingSeconds: 180 });
+  });
+  test('time mode waits for a real game clock and never allows a switch after GameEnd', async () => {
+    game = await service.runGame(settings);
+    const input = feed(); delete input.gameData.gameTime;
+    await service.ingest({ gameId: game.gameId, input }, game.hostToken);
+    a = await service.createPlayer({ playerName: 'Timed', gameCode: game.gameCode });
+    teams = (await service.getTeams(game.gameId)).teams;
+    champions = await service.getAllChampions(game.gameId);
+    await service.joinTeam({ player: a.playerId, team: teams[0].teamId }, a.playerToken);
+    await expect(service.chooseChampion({ player: a.playerId, champion: champions[0].championId }, a.playerToken))
+      .rejects.toMatchObject({ status: 409 });
+    await service.ingest({ gameId: game.gameId, input: feed([], 0) }, game.hostToken);
+    await service.chooseChampion({ player: a.playerId, champion: champions[0].championId }, a.playerToken);
+    expect(await service.status(a.playerId, a.playerToken)).toMatchObject({ rotationRemainingSeconds: 180 });
+    await service.ingest({ gameId: game.gameId, input: feed([{ EventID: 1, EventName: 'GameEnd', EventTime: 200 }], 200) }, game.hostToken);
+    expect(await service.status(a.playerId, a.playerToken)).toMatchObject({ rotationRemainingSeconds: 0, rotationAvailable: false });
+    await expect(service.chooseChampion({ player: a.playerId, champion: champions[1].championId }, a.playerToken))
+      .rejects.toMatchObject({ status: 409 });
+  });
+  test('legacy owners without a clock get a timer once game time arrives', async () => {
+    await setup();
+    db.all(Game)[0].lastGameTime = null;
+    const champion = db.all(Champion).find(row => row.championId === champions[0].championId);
+    champion.rotationEndsAtGameTime = null;
+    await service.ingest({ gameId: game.gameId, input: feed([], 50) }, game.hostToken);
+    expect(await service.status(a.playerId, a.playerToken)).toMatchObject({ rotationRemainingSeconds: 180, champion: { rotationEndsAtGameTime: 230 } });
+    await service.ingest({ gameId: game.gameId, input: feed([], 60) }, game.hostToken);
+    expect(await service.status(a.playerId, a.playerToken)).toMatchObject({ rotationRemainingSeconds: 170, champion: { rotationEndsAtGameTime: 230 } });
   });
   test('serializes concurrent rotation and cannot clear a newer champion owner',async()=>{
     await setup();
-    await service.ingest({gameId:game.gameId,input:feed([kill(1),kill(2)])},game.hostToken);
-    const third=await service.createPlayer({playerName:'Third',game:game.gameId});
+    await service.ingest({gameId:game.gameId,input:feed([kill(1),kill(2)],190)},game.hostToken);
+    const third=await service.createPlayer({playerName:'Third',gameCode:game.gameCode});
     await service.joinTeam({player:third.playerId,team:teams[0].teamId},third.playerToken);
     const attempts=await Promise.allSettled([
       service.chooseChampion({player:a.playerId,champion:champions[1].championId},a.playerToken),
@@ -374,9 +547,9 @@ describe('gameflow contract',()=>{
     const winnerId=(attempts.find(result=>result.status==='fulfilled') as any).value.player.playerId;
     expect(selected.blue.find((champion:any)=>champion.championId===champions[1].championId).player).toMatchObject({playerId:winnerId});
   });
-  test('serializes concurrent feeds without lost counters or duplicate consequences',async()=>{
+  test('serializes concurrent feeds without timer changes or duplicate consequences',async()=>{
     await setup(); await Promise.all([service.ingest({gameId:game.gameId,input:feed([kill(1)])},game.hostToken),service.ingest({gameId:game.gameId,input:feed([kill(1),kill(2)])},game.hostToken)]);
-    expect(db.all(Reward)).toHaveLength(2); expect((await service.status(a.playerId,a.playerToken)).counter).toEqual([0,2]);
+    expect(db.all(Reward)).toHaveLength(2); expect((await service.status(a.playerId,a.playerToken)).rotationRemainingSeconds).toBe(180);
   });
   test('one reward atomically produces one server-authoritative enemy penalty',async()=>{
     await setup(); await service.ingest({gameId:game.gameId,input:feed([kill()])},game.hostToken);
@@ -406,7 +579,7 @@ describe('gameflow contract',()=>{
     await expect(service.deletePlayer({id:b.playerId},b.playerToken)).rejects.toMatchObject({status:409});
   });
   test('missing/deleted player is a controlled 404 and unselected champion is null',async()=>{
-    game=await service.runGame(settings); a=await service.createPlayer({playerName:'Alex',game:game.gameId});
+    game=await service.runGame(settings); a=await service.createPlayer({playerName:'Alex',gameCode:game.gameCode});
     expect(await service.status(a.playerId,a.playerToken)).toMatchObject({champion:null,team:null,kda:[0,0,0],feedStale:true});
     await service.deletePlayer({id:a.playerId},a.playerToken);
     await expect(service.status(a.playerId,a.playerToken)).rejects.toMatchObject({status:404});
@@ -426,7 +599,7 @@ describe('gameflow contract',()=>{
     await service.ingest({gameId:game.gameId,input:ended},game.hostToken);
     expect((await service.status(a.playerId,a.playerToken)).gameState).toBe('ended');
     expect(db.all(Event)[0].takedown).toBeUndefined();
-    await expect(service.createPlayer({playerName:'Late',game:game.gameId})).rejects.toMatchObject({status:409});
+    await expect(service.createPlayer({playerName:'Late',gameCode:game.gameCode})).rejects.toMatchObject({status:409});
     await expect(service.ingest({gameId:game.gameId,input:feed([{EventID:2,EventName:'GameEnd',EventTime:11}],11)},game.hostToken)).rejects.toMatchObject({status:409});
     await expect(service.joinTeam({player:a.playerId,team:teams[0].teamId},a.playerToken)).rejects.toMatchObject({status:409});
     await expect(service.chooseChampion({player:a.playerId,champion:champions[1].championId},a.playerToken)).rejects.toMatchObject({status:409});
@@ -481,7 +654,7 @@ describe('gameflow contract',()=>{
   });
   test('environment kills neither reward nor prevent deletion of unselected lobby players', async () => {
     await setup();
-    const lobby = await service.createPlayer({playerName:'Lobby',game:game.gameId});
+    const lobby = await service.createPlayer({playerName:'Lobby',gameCode:game.gameCode});
     await service.ingest({gameId:game.gameId,input:feed([kill(1,'Minion_T100_L0')])},game.hostToken);
     expect(db.all(Reward)).toHaveLength(0);
     await service.deletePlayer({id:lobby.playerId},lobby.playerToken);

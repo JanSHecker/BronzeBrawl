@@ -11,13 +11,14 @@ and adds PostgreSQL and browser regression coverage.
 | --- | --- |
 | #4 | Environment deaths record the victim without requiring a champion killer or inventing a reward. Unknown/ambiguous participants fail atomically. Punishment rendering is null-safe. |
 | #5 | Host-scoped snapshots, roster/source validation and lifecycle/progress persist in PostgreSQL; no shared-file worker is used by the secured endpoints. A new service reads the same state. Host monitor sends the game ID and host capability. |
-| #6 | Events and consequences commit together under a PostgreSQL game advisory lock. Replays use durable `(game, EventID)` identity, including EventID 0, and property-order-independent JSONB comparison. Injected transaction failure rolls back counters and records before retry. |
+| #6 | Events and consequences commit together under a PostgreSQL game advisory lock. Replays use durable `(game, EventID)` identity, including EventID 0, and property-order-independent JSONB comparison. Injected transaction failure rolls back records before retry without changing champion timers. |
 | #7 | Reward ownership, enemy/same-game validation and server-derived amounts are enforced in one locked transaction. Parallel submissions produce one penalty. Legacy public punishment creation is disabled. |
-| #8 | Counter updates and champion selection share the game lock; selection is awaited; occupied/same-champion selections conflict. The frontend does not submit counters and restores state from authenticated Status. |
+| #8 | Three-minute champion timers and champion selection share the game lock; selection is awaited; occupied/same-champion selections conflict. The frontend does not submit timing and restores state from authenticated Status. See [champion-rotation.md](champion-rotation.md). |
 | #9 | Requests have timeouts. Polling schedules after completion, recovers from failures, and cancels on cleanup. Mutations release loading state in finally and display retryable failures. |
 | #10 | Frontend membership uses playerId, colors use teamName and selections use explicit teamId, never names/parity/adjacency. |
 | #12 | Configured amounts 7/9 and a complete K/D/A tuple, including persisted assists, are checked against real PostgreSQL. |
-| #13 | Creation validates a positive integer gameId and host capability before storing/showing an invite. Submission is guarded; cosmetic version-service failure does not block creation. Invite URLs use the origin and `/name/{id}`, ignoring query/hash. |
+| #13 | Creation validates an internal positive integer gameId, four-letter gameCode and host capability before storing/showing an invite. Submission is guarded; cosmetic version-service failure does not block creation. Invite URLs use the origin and `/name/{code}`, ignoring query/hash. |
+| #21 | Invitations and manual joins use a form-bound four-letter code, never shared localStorage. Settings lookup and player creation use the same code; the validated returned gameId scopes the tab's session/token. Component and same-browser-context two-tab regressions cover storage changes before submit. |
 
 ## Repeatable checks
 
@@ -33,6 +34,11 @@ and adds PostgreSQL and browser regression coverage.
    servers on ports 3107/5178. It never targets the public service.
 6. At the repository root run `node --test scripts/deployment.test.cjs` and
    `git diff --check`.
+
+For code-entry/UI regressions without PostgreSQL, run `npm run test:e2e:codes`
+in `Frontend` (same browser installation/override as above). These tests exercise
+the real UI and shared browser storage with a synthetic mocked API. The full
+`test:e2e` suite also checks two tabs against the real backend/test database.
 
 CI runs all of these gates, including the two-isolated-player browser test.
 PostgreSQL integration checks create synthetic audit-labelled games in the
@@ -50,6 +56,8 @@ dedicated test database; dispose of that database afterward, not production data
   capabilities remain readable, but never override an active per-tab session.
   Pre-security sessions without a
   capability must create a new session; authorization never falls back to a name.
+- Four-letter invitation codes and their API/deployment compatibility are documented
+  in [game-codes.md](game-codes.md). Numeric invitation links no longer allow joining.
 - Existing migration conflict detection remains fail-closed. Conflicting legacy
   event identities require operator review, never automatic record deletion.
 - These are local/CI checks with synthetic fixtures, not proof of a live LoL

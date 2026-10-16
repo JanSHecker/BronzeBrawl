@@ -22,6 +22,7 @@ const readinessQuery = jest.fn().mockImplementation((sql: string) => {
     game: ['gameId'], team: ['teamId'], champion: ['championId'], player: ['playerId'],
     punishment: ['punishmentId'], reward: ['rewardId'], takedown: ['takedownId'], event: ['eventId'],
     champion_assists_takedown: ['championChampionId', 'takedownTakedownId'],
+    activity_log: ['activityId'],
   };
   const rows: any[] = Object.entries(primaryKeys).flatMap(([table_name, columns]) => columns.map((column_name, index) => ({
     table_name, constraint_name: `pk_${table_name}`, constraint_type: 'PRIMARY KEY', column_name, ordinal_position: index + 1,
@@ -56,7 +57,6 @@ const createMock = () => ({
   getKDA: jest.fn(),
   confirmPunishment: jest.fn(),
   confirmReward: jest.fn(),
-  getChangeCounters: jest.fn(),
   getPunishments: jest.fn(),
   getRewards: jest.fn(),
   getTeamChampions: jest.fn(),

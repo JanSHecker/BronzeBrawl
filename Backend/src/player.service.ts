@@ -52,19 +52,6 @@ export class PlayerService {
       .where('playerId =:playerID', { playerID: playerId })
       .execute();
   }
-  async chooseChampion(playerChampionPair) {
-    await this.playerRepository
-      .createQueryBuilder('player')
-      .update(Player)
-      .set({
-        champion: playerChampionPair.champion,
-        killCounter: playerChampionPair.counter,
-        deathCounter: playerChampionPair.counter,
-      })
-      .where('playerId =:playerID', { playerID: playerChampionPair.player })
-      .execute();
-  }
-
   async getChampionPlayer(championID) {
     return this.playerRepository
       .createQueryBuilder('player')
@@ -75,54 +62,6 @@ export class PlayerService {
       .getOne();
   }
 
-  async updateChangeCounter(champion, isKiller) {
-    const priorChampion = await this.playerRepository
-      .createQueryBuilder('player')
-      .leftJoinAndSelect('player.champion', 'champion')
-      .where('player.champion =:championID', {
-        championID: champion.championId,
-      })
-      .getOne();
-    console.log(champion.player);
-    if (priorChampion !== null) {
-      if (isKiller) {
-        await this.playerRepository
-          .createQueryBuilder('player')
-          .leftJoinAndSelect('player.champion', 'champion')
-          .update(Player)
-          .set({
-            killCounter: priorChampion.killCounter - 1,
-          })
-          .where('champion =:championID', {
-            championID: champion.championId,
-          })
-          .execute();
-      } else {
-        await this.playerRepository
-          .createQueryBuilder('player')
-          .leftJoinAndSelect('player.champion', 'champion')
-          .update(Player)
-          .set({
-            deathCounter: priorChampion.deathCounter - 1,
-          })
-          .where('champion =:championID', {
-            championID: champion.championId,
-          })
-          .execute();
-      }
-    }
-  }
-  async getChangeCounters(id) {
-    const player = await this.playerRepository
-      .createQueryBuilder('player')
-      .where('player.playerId =:playerID', {
-        playerID: id,
-      })
-      .getOne();
-    if (player !== null) {
-      return [player.killCounter, player.deathCounter];
-    } else return '∞';
-  }
   async deletePlayer(id) {
     await this.playerRepository
       .createQueryBuilder('player')

@@ -5,20 +5,20 @@ import { GAME_ID_KEY, GAME_VERSION_KEY, DEFAULT_GAME_VERSION } from "../constant
 import api, { validateGame, hostTokenKey, writeActiveSession } from "../api";
 import { useAction } from "../useRequest";
 
-const CreationForm = ({ setGameId }) => {
+const CreationForm = ({ setGame }) => {
   const [punishmentAmount, setPunishmentAmount] = useState("");
   const [rewardAmount, setRewardAmount] = useState("");
-  const [rotationMode, setRotationMode] = useState("Kills");
-  const [defaultCounter, setDefaultCounter] = useState("");
   const { run, loading, error } = useAction();
   const submit = () => run(async () => {
-    if (![punishmentAmount, rewardAmount, defaultCounter].every(value => /^[1-9]\d*$/.test(value) && Number(value) <= 100)) throw new Error("Settings must be integers between 1 and 100");
-    const { data } = await api.get("runGame", { params: { punishmentAmount, rewardAmount, rotationMode, defaultCounter } });
+    const amounts = [punishmentAmount, rewardAmount];
+    if (!amounts.every(value => /^[1-9]\d*$/.test(value) && Number(value) <= 100)) throw new Error("Settings must be integers between 1 and 100");
+    const params = { punishmentAmount, rewardAmount };
+    const { data } = await api.get("runGame", { params });
     const game = validateGame(data);
     sessionStorage.setItem(hostTokenKey(game.gameId), game.hostToken);
-    writeActiveSession({ gameId: game.gameId });
+    writeActiveSession({ gameId: game.gameId, gameCode: game.gameCode });
     localStorage.setItem(GAME_ID_KEY, game.gameId);
-    setGameId(game.gameId);
+    setGame({ gameId: game.gameId, gameCode: game.gameCode });
     localStorage.setItem(GAME_VERSION_KEY, DEFAULT_GAME_VERSION);
     axios.get("https://ddragon.leagueoflegends.com/api/versions.json", { timeout: 3000 })
       .then(({ data: versions }) => { if (Array.isArray(versions) && typeof versions[0] === "string") localStorage.setItem(GAME_VERSION_KEY, versions[0]); })
@@ -35,16 +35,7 @@ const CreationForm = ({ setGameId }) => {
         <label htmlFor="rewardAmount">Amount per Reward</label>
         <Input id="rewardAmount" type="text" value={rewardAmount} onChange={numeric(setRewardAmount)} />
       </div>
-      <div className="form-control w-full max-w-xs">
-        <label htmlFor="rotationMode">Choose Rotation Mode</label>
-        <select id="rotationMode" value={rotationMode} onChange={event => setRotationMode(event.target.value)}>
-          <option value="Kills">Kills</option><option value="Deaths">Deaths</option>
-        </select>
-      </div>
-      <div className="form-control w-full max-w-xs">
-        <label htmlFor="defaultCounter">Kills/Deaths until Rotation</label>
-        <Input id="defaultCounter" type="text" value={defaultCounter} onChange={numeric(setDefaultCounter)} />
-      </div>
+      <p className="text-sm max-w-xs">Each champion starts with 3 minutes on takeover. After that, choose another free champion.</p>
     </div>
     <Button disabled={loading} type="submit" wide="true" color="primary" className="m-8 border border-black text-black">CREATE</Button>
     {error && <p role="alert">{error}</p>}

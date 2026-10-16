@@ -8,17 +8,14 @@ export class Game {
   @PrimaryGeneratedColumn()
   gameId: number;
 
+  @Column({ type: 'varchar', length: 4, nullable: true, unique: true })
+  gameCode: string;
+
   @Column()
   punishmentAmount: number;
 
   @Column()
   rewardAmount: number;
-
-  @Column()
-  rotationMode: string;
-
-  @Column({ nullable: true })
-  defaultRotationCounter: number;
 
   @Column({ default: 'waiting_for_feed' })
   state: string;

@@ -20,12 +20,17 @@ test.each([undefined, "<html>SPA</html>", { gameId: "7" }, { gameId: 0 }, { game
   expect(() => validateGame(game)).toThrow();
 });
 
-test("only integer IDs and a host capability form a valid creation response", () => {
-  const game = { gameId: 7, hostToken: "a".repeat(64) };
+test("creation requires an internal ID, four-letter code and host capability", () => {
+  const game = { gameId: 7, gameCode: "KFRW", hostToken: "a".repeat(64) };
   expect(validateGame(game)).toBe(game);
   expect(inviteUrl(undefined)).toBe("");
   expect(inviteUrl("undefined")).toBe("");
-  expect(inviteUrl(7)).toBe(`${window.location.origin}/name/7`);
+  expect(inviteUrl(7)).toBe("");
+  expect(inviteUrl("KFRW")).toBe(`${window.location.origin}/name/KFRW`);
+});
+
+test.each([undefined, null, 7, "7", "ABC", "ABCDE", "AB1D", "kfrw"])("creation rejects invalid or missing game code %j", gameCode => {
+  expect(() => validateGame({ gameId: 7, gameCode, hostToken: "a".repeat(64) })).toThrow("Invalid game response");
 });
 
 test("per-tab capabilities override legacy storage and never fall back across sessions", () => {

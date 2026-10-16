@@ -23,7 +23,9 @@ import { Reward } from './entities/reward.entity';
 import { RewardService } from './reward.service';
 import { DistributionService } from './distribution.service';
 import { GameflowService } from './gameflow.service';
+import { ActivityLog } from './entities/activity-log.entity';
 import { CompanionController } from './companion.controller';
+import { JoinRateLimitGuard } from './join-rate-limit.guard';
 
 @Module({
   imports: [
@@ -38,6 +40,7 @@ import { CompanionController } from './companion.controller';
       Player,
       Team,
       Reward,
+      ActivityLog,
     ]),
   ],
   controllers: [AppController, CompanionController],
@@ -54,6 +57,7 @@ import { CompanionController } from './companion.controller';
     RewardService,
     DistributionService,
     GameflowService,
+    JoinRateLimitGuard,
   ],
 })
 export class AppModule {}

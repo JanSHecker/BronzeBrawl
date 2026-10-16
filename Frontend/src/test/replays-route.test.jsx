@@ -3,10 +3,11 @@ import { act, render, screen } from '@testing-library/react';
 import { expect, test, vi } from 'vitest';
 import CreationPage from '../CreationPage/CreationPage';
 import axios from 'axios';
+import { MemoryRouter } from 'react-router-dom';
 vi.mock('axios', () => { const client = { get: vi.fn(), post: vi.fn(), interceptors: { request: { use: vi.fn() } } }; client.create = () => client; return { default: client }; });
 
 test('creation links only to the companion, not replay management', () => {
-  render(<CreationPage />);
+  render(<MemoryRouter><CreationPage /></MemoryRouter>);
   expect(screen.getByRole('link', { name: 'Companion verbinden' })).toHaveAttribute('href', '/companion');
   expect(screen.queryByText(/Replay/)).not.toBeInTheDocument();
 });

@@ -18,13 +18,12 @@ const StatusPage = () => {
   const fetchStatus = async signal => {
     const { data } = await api.get("Status", { params: { playerId: Number(getPlayerId()) }, signal });
     if (signal?.aborted) return;
-    if (!data || !Array.isArray(data.kda) || data.kda.length !== 3 || !Array.isArray(data.counter)
+    if (!data || !Array.isArray(data.kda) || data.kda.length !== 3
       || !Array.isArray(data.punishments) || !Array.isArray(data.rewards) || !Array.isArray(data.enemyTeam)) throw new Error("Invalid status response");
     if (!data.team) { navigate("/team", { replace: true }); return; }
     if (!data.champion) { navigate("/champion", { replace: true }); return; }
     setStatus(data);
     localStorage.setItem("teamId", data.team.teamId);
-    localStorage.setItem("rotationMode", data.rotationMode);
     localStorage.setItem("activeChampionId", data.champion.championId);
     localStorage.setItem("activeChampionName", data.champion.championName);
   };
@@ -42,7 +41,8 @@ const StatusPage = () => {
             onError={event => { event.currentTarget.onerror = null; event.currentTarget.src = placeholder; }} alt={status.champion.championName} />
           <div><p>{status.player?.playerName}</p><strong>{status.champion.championName}</strong><p className="status-kda" aria-label={`${status.kda[0]} kills, ${status.kda[1]} deaths, ${status.kda[2]} assists`}>{status.kda.join("/")}</p></div>
         </div>
-        <ChampionRotation changeCounter={status.counter} rotationMode={status.rotationMode} navigate={navigate} ended={status.gameState === "ended"} />
+        <ChampionRotation rotationRemainingSeconds={status.rotationRemainingSeconds} rotationAvailable={status.rotationAvailable}
+          navigate={navigate} ended={status.gameState === "ended"} />
       </div>
       <PunishmentCounters punishments={status.punishments} onRefresh={refresh} />
       <ChestInventory rewards={status.rewards} enemyTeam={status.enemyTeam} onRefresh={refresh} />

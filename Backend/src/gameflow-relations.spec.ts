@@ -24,8 +24,7 @@ class RepositoryShapedDataSource {
       gameId: 42,
       punishmentAmount: 5,
       rewardAmount: 6,
-      rotationMode: 'Kills',
-      defaultRotationCounter: 2,
+      lastGameTime: 10,
       state: 'live',
     };
     this.teams = [
@@ -38,8 +37,6 @@ class RepositoryShapedDataSource {
       game: this.game,
       team: this.teams[0],
       champion: null,
-      killCounter: 0,
-      deathCounter: 0,
       playerTokenHash: createHash('sha256').update('a'.repeat(64)).digest('hex'),
     }];
     this.champions = [
@@ -98,6 +95,20 @@ class RepositoryShapedDataSource {
 }
 
 describe('GameflowService production relation loading', () => {
+  test('loads the champion timer from persisted scalar data', async () => {
+    const database = new RepositoryShapedDataSource();
+    const service = new GameflowService(database as any);
+    const selected = await service.chooseChampion({ player: 501, champion: 601 }, 'a'.repeat(64));
+    expect(selected.rotationEndsAtGameTime).toBe(190);
+    database.game.lastGameTime = 100;
+    expect(await new GameflowService(database as any).status(501, 'a'.repeat(64))).toMatchObject({
+      rotationRemainingSeconds: 90, rotationAvailable: false,
+      champion: { rotationEndsAtGameTime: 190 },
+    });
+    database.game.lastGameTime = 190;
+    expect(await service.status(501, 'a'.repeat(64))).toMatchObject({ rotationRemainingSeconds: 0, rotationAvailable: true });
+  });
+
   test('loads team.game for champion listing and selection through a TypeORM-shaped repository', async () => {
     const database = new RepositoryShapedDataSource();
     const service = new GameflowService(database as any);

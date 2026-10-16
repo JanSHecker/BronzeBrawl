@@ -38,8 +38,6 @@ export class GameService {
         game: gameId,
         team: i < 5 ? blueTeam : redTeam,
         champion: i < 5 ? champions.blue[i] : champions.red[i - 5],
-        killCounter: 5,
-        deathCounter: 5,
       };
       await this.playerService.createPlayer(playerTemplate);
     }

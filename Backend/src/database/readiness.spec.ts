@@ -16,6 +16,7 @@ const primaryKeys: Record<string, string[]> = {
   reward: ['rewardId'],
   takedown: ['takedownId'],
   event: ['eventId'],
+  activity_log: ['activityId'],
   champion_assists_takedown: ['championChampionId', 'takedownTakedownId'],
 };
 
@@ -113,5 +114,31 @@ describe('database readiness', () => {
     });
     expect(result.ready).toBe(false);
     expect(result.missingTables).toEqual([...REQUIRED_APPLICATION_TABLES]);
+  });
+
+  test('requires the game code column and its unique constraint', async () => {
+    for (const missing of ['column', 'constraint']) {
+      const query = completeSchemaQuery().mockImplementation((sql: string) => {
+        const rows = completeSchemaQuery()(sql);
+        if (missing === 'column' && sql.includes('information_schema.columns')) {
+          return rows.filter((row: any) => row.table_name !== 'game' || row.column_name !== 'gameCode');
+        }
+        if (missing === 'constraint' && sql.includes('pg_catalog.pg_constraint')) {
+          return rows.filter((row: any) => row.table_name !== 'game' || row.constraint_type !== 'UNIQUE');
+        }
+        return rows;
+      });
+      expect(await checkDatabaseReadiness({ isInitialized: true, query })).toEqual({ ready: false, missingTables: ['game'] });
+    }
+  });
+
+  test('requires the persisted champion timer column', async () => {
+    const query = completeSchemaQuery().mockImplementation((sql: string) => {
+      const rows = completeSchemaQuery()(sql);
+      return sql.includes('information_schema.columns')
+        ? rows.filter((row: any) => row.table_name !== 'champion' || row.column_name !== 'rotationEndsAtGameTime')
+        : rows;
+    });
+    expect(await checkDatabaseReadiness({ isInitialized: true, query })).toEqual({ ready: false, missingTables: ['champion'] });
   });
 });

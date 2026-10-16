@@ -16,7 +16,7 @@ const navigate = vi.hoisted(() => vi.fn());
 vi.mock('react-router-dom', () => ({ useNavigate: () => navigate }));
 vi.mock('axios', () => { const client = { get: vi.fn(), post: vi.fn(), interceptors: { request: { use: vi.fn() } } }; client.create = vi.fn(() => client); return { default: client }; });
 const champion = { championId: 9, championName: 'Ahri', player: null, team: { teamId: 2, teamName: 0 } };
-const status = { champion, team: { teamId: 2, teamName: 0 }, enemyTeamId: 8, rotationMode: 'Kills', gameState: 'running', feedStale: false, punishments: [], rewards: [], kda: [2,1,3], counter: [3,4], enemyTeam: [] };
+const status = { champion, team: { teamId: 2, teamName: 0 }, enemyTeamId: 8, gameState: 'live', feedStale: false, punishments: [], rewards: [], kda: [2,1,3], rotationRemainingSeconds: 180, rotationAvailable: false, enemyTeam: [] };
 const deferred = () => { let resolve, reject; const promise = new Promise((a,b) => { resolve=a; reject=b; }); return { promise, resolve, reject }; };
 beforeEach(() => { vi.clearAllMocks(); localStorage.setItem('baseURL','/api'); localStorage.setItem('GameID','5'); localStorage.setItem('playerId','42'); localStorage.setItem('playerName','Alex'); sessionStorage.setItem('bb:active', JSON.stringify({ gameId: 5, playerId: 42, playerName: 'Alex' })); sessionStorage.setItem('bb:player:5:42','player-secret'); axios.get.mockResolvedValue({ data: status }); axios.post.mockResolvedValue({ data: { ...status, playerId: 42, playerToken: 'player-secret' } }); });
 test('status retries a failed poll, uses canonical champion and cleans interval', async () => {
@@ -29,7 +29,7 @@ test('status retries a failed poll, uses canonical champion and cleans interval'
 });
 test('status loading is not rotation zero and ended match does not redirect', async () => {
   const req=deferred(); axios.get.mockReturnValueOnce(req.promise); render(<StatusPage/>); expect(navigate).not.toHaveBeenCalled();
-  await act(async () => req.resolve({data:{...status, gameState:'ended', counter:[0,0]}}));
+  await act(async () => req.resolve({data:{...status, gameState:'ended', rotationRemainingSeconds:0}}));
   expect(screen.getByRole('status')).toHaveTextContent(/game ended/i); expect(navigate).not.toHaveBeenCalled();
 });
 test('empty waiting teams render safely; duplicate name does not grant READY', async () => {
@@ -63,14 +63,14 @@ test('all reward targets locked until mutation AND canonical refresh finish',asy
   await act(async()=>req.resolve({data:{}})); expect(onRefresh).toHaveBeenCalled(); expect(screen.getByRole('button',{name:/Two/})).toBeDisabled(); await act(async()=>refresh.resolve());
 });
 test('invite derives origin path without query, hash or host secret',()=>{
-  window.history.replaceState({},'', '/?secret=value#hash'); render(<Linkbox gameId={5}/>); expect(screen.getByText(`${window.location.origin}/name/5`)).toBeInTheDocument();
+  window.history.replaceState({},'', '/?secret=value#hash'); render(<Linkbox gameCode="KFRW"/>); expect(screen.getByText(`${window.location.origin}/name/KFRW`)).toBeInTheDocument();
 });
 test('creation rejects HTML success responses visibly and re-enables submit',async()=>{
-  axios.get.mockResolvedValue({data:'<!doctype html>'}); render(<CreationForm setGameId={vi.fn()} currentDomain='/api'/>);
+  axios.get.mockResolvedValue({data:'<!doctype html>'}); render(<CreationForm setGame={vi.fn()}/>);
   screen.getAllByRole('textbox').forEach(input=>fireEvent.change(input,{target:{value:'3'}})); fireEvent.click(screen.getByRole('button',{name:'CREATE'})); await act(async()=>{}); expect(screen.getByRole('alert')).toHaveTextContent(/invalid|response/i); expect(screen.getByRole('button',{name:'CREATE'})).toBeEnabled();
 });
 test('name submit failure resets pending and keeps session token out of localStorage',async()=>{
-  axios.post.mockRejectedValueOnce(new Error('offline')); render(<NameForm/>); fireEvent.change(screen.getByRole('textbox'),{target:{value:'Alex'}}); fireEvent.click(screen.getByRole('button',{name:'START'})); await act(async()=>{}); expect(screen.getByRole('alert')).toHaveTextContent(/offline|failed/i); expect(screen.getByRole('button',{name:'START'})).toBeEnabled();
+  axios.get.mockResolvedValueOnce({data:{gameId:5,gameCode:'KFRW'}}); axios.post.mockRejectedValueOnce(new Error('offline')); render(<NameForm gameCode="KFRW"/>); fireEvent.change(screen.getByLabelText('What is your name?'),{target:{value:'Alex'}}); fireEvent.click(screen.getByRole('button',{name:'START'})); await act(async()=>{}); expect(screen.getByRole('alert')).toHaveTextContent(/offline|failed/i); expect(screen.getByRole('button',{name:'START'})).toBeEnabled();
 });
 test('monitor describes the automatic feed without asking for tokens or pairing',async()=>{
    window.history.replaceState({},'', '/lolApi'); render(<LoLApiFeed/>); await act(async()=>{}); expect(screen.getByText(/verbinde den Companion/)).toBeInTheDocument(); expect(screen.queryByRole('textbox')).not.toBeInTheDocument(); expect(axios.post).not.toHaveBeenCalled();

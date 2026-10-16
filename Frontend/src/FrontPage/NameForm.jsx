@@ -1,27 +1,31 @@
 import { useState } from "react";
 import { Button, Input } from "react-daisyui";
 import { useNavigate } from "react-router-dom";
-import api, { validId, playerTokenKey, writeActiveSession } from "../api";
+import api, { validId, normalizeGameCode, validGameCode, playerTokenKey, writeActiveSession } from "../api";
 import { useAction } from "../useRequest";
-import { GAME_ID_KEY, PLAYER_NAME_KEY } from "../constants";
+import { PLAYER_NAME_KEY } from "../constants";
 
-const NameForm = () => {
+const NameForm = ({ gameCode }) => {
+  const [code, setCode] = useState("");
   const [name, setName] = useState("");
+  const targetCode = normalizeGameCode(gameCode ?? code);
   const { run, loading, error } = useAction();
   const navigate = useNavigate();
   const submit = event => {
     event.preventDefault();
     run(async () => {
-      const gameId = Number(localStorage.getItem(GAME_ID_KEY));
-      if (!validId(gameId) || !name.trim()) throw new Error("Invalid game or name");
-      const { data: settings } = await api.get("getSettings", { params: { gameId } });
-      const { data: player } = await api.post("createPlayer", { playerName: name.trim(), game: gameId });
-      if (!validId(player?.playerId) || !/^[a-f0-9]{64}$/i.test(player.playerToken || "")) throw new Error("Invalid player response");
+      const playerName = name.trim();
+      if (!validGameCode(targetCode) || !playerName) throw new Error("Enter a four-letter game code and your name.");
+      const { data: settings } = await api.get("getSettings", { params: { gameCode: targetCode } });
+      const gameId = settings?.gameId;
+      if (!validId(gameId) || settings.gameCode !== targetCode) throw new Error("Invalid game response");
+      const { data: player } = await api.post("createPlayer", { playerName, gameCode: targetCode });
+      if (player?.game !== gameId || !validId(player?.playerId) || !/^[a-f0-9]{64}$/i.test(player.playerToken || "")) throw new Error("Invalid player response");
       sessionStorage.setItem(playerTokenKey(gameId, player.playerId), player.playerToken);
-      writeActiveSession({ gameId, playerId: player.playerId, playerName: name.trim() });
+      writeActiveSession({ gameId, gameCode: targetCode, playerId: player.playerId, playerName });
       localStorage.removeItem("playerToken");
       localStorage.setItem("playerId", player.playerId);
-      localStorage.setItem(PLAYER_NAME_KEY, name.trim());
+      localStorage.setItem(PLAYER_NAME_KEY, playerName);
       ["teamId", "enemyTeamId", "activeChampionId", "activeChampionName", "changeAllowed"].forEach(key => localStorage.removeItem(key));
       for (const key of ["punishmentAmount", "rewardAmount", "rotationMode", "defaultRotationCounter"]) {
         const value = settings[key] ?? settings.settings?.[key];
@@ -32,10 +36,15 @@ const NameForm = () => {
   };
   return <form onSubmit={submit}>
     <div className="form-control w-full max-w-xs p-4">
-      <label htmlFor="name">What is your name?</label>
-      <Input id="name" type="text" value={name} onChange={event => setName(event.target.value)} className="bg-white" />
+      <label htmlFor="game-code">Game code</label>
+      <Input id="game-code" type="text" value={gameCode ?? code} readOnly={gameCode !== undefined} disabled={loading} onChange={event => setCode(event.target.value)} autoCapitalize="characters" autoComplete="off" spellCheck={false} placeholder="KFRW" className="bg-white uppercase" />
+      <p className="text-sm">Four letters from your host.</p>
     </div>
-    <Button disabled={loading || !name.trim()} type="submit" color="primary" wide="true" className="m-8">START</Button>
+    <div className="form-control w-full max-w-xs p-4">
+      <label htmlFor="name">What is your name?</label>
+      <Input id="name" type="text" value={name} disabled={loading} onChange={event => setName(event.target.value)} className="bg-white" />
+    </div>
+    <Button disabled={loading || !validGameCode(targetCode) || !name.trim()} type="submit" color="primary" wide="true" className="m-8">START</Button>
     {error && <p role="alert">{error}</p>}
   </form>;
 };

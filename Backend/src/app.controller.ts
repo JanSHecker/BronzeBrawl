@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, HttpException, HttpStatus, Optional, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Get, Headers, HttpException, HttpStatus, Optional, Post, Query, Res, UseGuards } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { Response } from 'express';
@@ -12,6 +12,7 @@ import { DistributionService } from './distribution.service';
 import { TeamService } from './team.service';
 import { GameflowService } from './gameflow.service';
 import { checkDatabaseReadiness } from './database/readiness';
+import { JoinRateLimitGuard } from './join-rate-limit.guard';
 
 @Controller()
 export class AppController {
@@ -85,6 +86,7 @@ export class AppController {
   }
 
   @Post('createPlayer')
+  @UseGuards(JoinRateLimitGuard)
   async createPlayer(@Body() playerData) {
     if (this.gameflow) return this.gameflow.createPlayer(playerData);
     return this.gameflowUnavailable();
@@ -155,8 +157,15 @@ export class AppController {
   }
 
   @Get('getSettings')
-  async getSettings(@Query('gameId') gameId) {
-    if (this.gameflow) return this.gameflow.getSettings(this.integerQuery(gameId, 'gameId'));
+  @UseGuards(JoinRateLimitGuard)
+  async getSettings(@Query('gameCode') gameCode) {
+    if (this.gameflow) return this.gameflow.getSettingsByCode(gameCode);
+    return this.gameflowUnavailable();
+  }
+
+  @Get('getInvitation')
+  async getInvitation(@Query('gameId') gameId, @Headers('x-game-token') token: string) {
+    if (this.gameflow) return this.gameflow.getInvitation(this.integerQuery(gameId, 'gameId'), token);
     return this.gameflowUnavailable();
   }
 

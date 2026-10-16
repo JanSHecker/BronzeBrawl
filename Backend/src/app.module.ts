@@ -24,6 +24,7 @@ import { RewardService } from './reward.service';
 import { DistributionService } from './distribution.service';
 import { GameflowService } from './gameflow.service';
 import { CompanionController } from './companion.controller';
+import { JoinRateLimitGuard } from './join-rate-limit.guard';
 
 @Module({
   imports: [
@@ -54,6 +55,7 @@ import { CompanionController } from './companion.controller';
     RewardService,
     DistributionService,
     GameflowService,
+    JoinRateLimitGuard,
   ],
 })
 export class AppModule {}

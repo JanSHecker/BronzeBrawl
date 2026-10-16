@@ -62,8 +62,8 @@ let db: MemoryDB, service: any, game: any, a: any, b: any, teams: any, champions
 async function setup() {
   game=await service.runGame(settings);
   await service.ingest({gameId:game.gameId,input:feed()},game.hostToken);
-  a=await service.createPlayer({playerName:'Alex',game:game.gameId});
-  b=await service.createPlayer({playerName:'Alex',game:game.gameId});
+  a=await service.createPlayer({playerName:'Alex',gameCode:game.gameCode});
+  b=await service.createPlayer({playerName:'Alex',gameCode:game.gameCode});
   teams=(await service.getTeams(game.gameId)).teams;
   champions=await service.getAllChampions(game.gameId);
   await service.joinTeam({player:a.playerId,team:teams[0].teamId},a.playerToken);
@@ -226,8 +226,8 @@ describe('gameflow contract',()=>{
     const deathSettings={...settings,rotationMode:'Deaths',defaultCounter:3};
     const g=await service.runGame(deathSettings);
     await service.ingest({gameId:g.gameId,input:feed([],10)},g.hostToken);
-    const first=await service.createPlayer({playerName:'First',game:g.gameId});
-    const second=await service.createPlayer({playerName:'Second',game:g.gameId});
+    const first=await service.createPlayer({playerName:'First',gameCode:g.gameCode});
+    const second=await service.createPlayer({playerName:'Second',gameCode:g.gameCode});
     const gameTeams=(await service.getTeams(g.gameId)).teams;
     const gameChampions=await service.getAllChampions(g.gameId);
     await service.joinTeam({player:first.playerId,team:gameTeams[0].teamId},first.playerToken);
@@ -243,7 +243,7 @@ describe('gameflow contract',()=>{
   test('serializes concurrent rotation and cannot clear a newer champion owner',async()=>{
     await setup();
     await service.ingest({gameId:game.gameId,input:feed([kill(1),kill(2)])},game.hostToken);
-    const third=await service.createPlayer({playerName:'Third',game:game.gameId});
+    const third=await service.createPlayer({playerName:'Third',gameCode:game.gameCode});
     await service.joinTeam({player:third.playerId,team:teams[0].teamId},third.playerToken);
     const attempts=await Promise.allSettled([
       service.chooseChampion({player:a.playerId,champion:champions[1].championId},a.playerToken),
@@ -287,7 +287,7 @@ describe('gameflow contract',()=>{
     await expect(service.deletePlayer({id:b.playerId},b.playerToken)).rejects.toMatchObject({status:409});
   });
   test('missing/deleted player is a controlled 404 and unselected champion is null',async()=>{
-    game=await service.runGame(settings); a=await service.createPlayer({playerName:'Alex',game:game.gameId});
+    game=await service.runGame(settings); a=await service.createPlayer({playerName:'Alex',gameCode:game.gameCode});
     expect(await service.status(a.playerId,a.playerToken)).toMatchObject({champion:null,team:null,kda:[0,0,0],feedStale:true});
     await service.deletePlayer({id:a.playerId},a.playerToken);
     await expect(service.status(a.playerId,a.playerToken)).rejects.toMatchObject({status:404});
@@ -307,7 +307,7 @@ describe('gameflow contract',()=>{
     await service.ingest({gameId:game.gameId,input:ended},game.hostToken);
     expect((await service.status(a.playerId,a.playerToken)).gameState).toBe('ended');
     expect(db.all(Event)[0].takedown).toBeUndefined();
-    await expect(service.createPlayer({playerName:'Late',game:game.gameId})).rejects.toMatchObject({status:409});
+    await expect(service.createPlayer({playerName:'Late',gameCode:game.gameCode})).rejects.toMatchObject({status:409});
     await expect(service.ingest({gameId:game.gameId,input:feed([{EventID:2,EventName:'GameEnd',EventTime:11}],11)},game.hostToken)).rejects.toMatchObject({status:409});
     await expect(service.joinTeam({player:a.playerId,team:teams[0].teamId},a.playerToken)).rejects.toMatchObject({status:409});
     await expect(service.chooseChampion({player:a.playerId,champion:champions[1].championId},a.playerToken)).rejects.toMatchObject({status:409});
@@ -362,7 +362,7 @@ describe('gameflow contract',()=>{
   });
   test('environment kills neither reward nor prevent deletion of unselected lobby players', async () => {
     await setup();
-    const lobby = await service.createPlayer({playerName:'Lobby',game:game.gameId});
+    const lobby = await service.createPlayer({playerName:'Lobby',gameCode:game.gameCode});
     await service.ingest({gameId:game.gameId,input:feed([kill(1,'Minion_T100_L0')])},game.hostToken);
     expect(db.all(Reward)).toHaveLength(0);
     await service.deletePlayer({id:lobby.playerId},lobby.playerToken);

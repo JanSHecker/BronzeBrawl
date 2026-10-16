@@ -1,15 +1,15 @@
 import { useParams } from "react-router-dom";
 import NameForm from "./NameForm";
-import { GAME_ID_KEY } from "../constants";
-import { API_BASE_URL } from "../constants";
+import { normalizeGameCode, validGameCode } from "../api";
 import icon from "../bronzeIcon150.png";
 
 const FrontPage = () => {
-  const params = useParams();
-  const gameId = params.parameter;
-  localStorage.setItem(GAME_ID_KEY, gameId);
-  const currentDomain = API_BASE_URL;
-  localStorage.setItem("baseURL", currentDomain);
+  const { parameter } = useParams();
+  const gameCode = normalizeGameCode(parameter);
+  if (!validGameCode(gameCode)) return <>
+    <p role="alert">Invalid invitation. Game codes contain four letters.</p>
+    <a href="/" className="underline">Enter a game code</a>
+  </>;
   return (
     <>
       <img
@@ -17,8 +17,7 @@ const FrontPage = () => {
         alt="bronze brawl with icon"
         className="mb-8 max-w-full h-auto"
       />
-      <NameForm />
-      <h1>Game ID: {gameId}</h1>
+      <NameForm key={gameCode} gameCode={gameCode} />
     </>
   );
 };

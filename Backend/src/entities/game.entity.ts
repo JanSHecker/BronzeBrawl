@@ -8,6 +8,9 @@ export class Game {
   @PrimaryGeneratedColumn()
   gameId: number;
 
+  @Column({ type: 'varchar', length: 4, nullable: true, unique: true })
+  gameCode: string;
+
   @Column()
   punishmentAmount: number;
 

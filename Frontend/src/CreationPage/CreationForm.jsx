@@ -5,7 +5,7 @@ import { GAME_ID_KEY, GAME_VERSION_KEY, DEFAULT_GAME_VERSION } from "../constant
 import api, { validateGame, hostTokenKey, writeActiveSession } from "../api";
 import { useAction } from "../useRequest";
 
-const CreationForm = ({ setGameId }) => {
+const CreationForm = ({ setGame }) => {
   const [punishmentAmount, setPunishmentAmount] = useState("");
   const [rewardAmount, setRewardAmount] = useState("");
   const [rotationMode, setRotationMode] = useState("Kills");
@@ -16,9 +16,9 @@ const CreationForm = ({ setGameId }) => {
     const { data } = await api.get("runGame", { params: { punishmentAmount, rewardAmount, rotationMode, defaultCounter } });
     const game = validateGame(data);
     sessionStorage.setItem(hostTokenKey(game.gameId), game.hostToken);
-    writeActiveSession({ gameId: game.gameId });
+    writeActiveSession({ gameId: game.gameId, gameCode: game.gameCode });
     localStorage.setItem(GAME_ID_KEY, game.gameId);
-    setGameId(game.gameId);
+    setGame({ gameId: game.gameId, gameCode: game.gameCode });
     localStorage.setItem(GAME_VERSION_KEY, DEFAULT_GAME_VERSION);
     axios.get("https://ddragon.leagueoflegends.com/api/versions.json", { timeout: 3000 })
       .then(({ data: versions }) => { if (Array.isArray(versions) && typeof versions[0] === "string") localStorage.setItem(GAME_VERSION_KEY, versions[0]); })

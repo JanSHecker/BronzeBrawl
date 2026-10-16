@@ -22,20 +22,21 @@ beforeEach(() => {
 
 test("creation rejects HTML success without publishing an undefined invite", async () => {
   http.get.mockResolvedValue({ data: "<!doctype html>SPA" });
-  const setGameId = vi.fn();
-  mount(<CreationForm setGameId={setGameId} currentDomain="/api" />);
+  const setGame = vi.fn();
+  mount(<CreationForm setGame={setGame} />);
   const inputs = screen.getAllByRole("textbox");
   inputs.forEach(input => fireEvent.change(input, { target: { value: "3" } }));
   fireEvent.click(screen.getByRole("button", { name: "CREATE" }));
   await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
-  expect(setGameId).not.toHaveBeenCalled();
+  expect(setGame).not.toHaveBeenCalled();
   expect(localStorage.getItem("GameID")).toBe("7");
 });
 
 test("invite URLs use an origin-based route, never the current query/hash", () => {
   window.history.replaceState({}, "", "/?source=test#section");
-  mount(<Linkbox gameId={7} />);
-  expect(screen.getByText(`${window.location.origin}/name/7`)).toBeInTheDocument();
+  mount(<Linkbox gameCode="KFRW" />);
+  expect(screen.getByText(`${window.location.origin}/name/KFRW`)).toBeInTheDocument();
+  expect(screen.getByText("KFRW")).toBeInTheDocument();
   window.history.replaceState({}, "", "/");
 });
 
@@ -97,15 +98,15 @@ test("champion selection awaits the commit and recovers after an occupied confli
 test("creation ignores duplicate submissions and version-service outages", async () => {
   let resolve;
   http.get.mockImplementationOnce(() => new Promise(done => { resolve = done; })).mockRejectedValueOnce(new Error("version service offline"));
-  const setGameId = vi.fn();
-  mount(<CreationForm setGameId={setGameId} />);
+  const setGame = vi.fn();
+  mount(<CreationForm setGame={setGame} />);
   screen.getAllByRole("textbox").forEach(input => fireEvent.change(input, { target: { value: "3" } }));
   const button = screen.getByRole("button", { name: "CREATE" });
   fireEvent.submit(button.closest("form"));
   fireEvent.submit(button.closest("form"));
   expect(http.get).toHaveBeenCalledTimes(1);
-  resolve({ data: { gameId: 8, hostToken: "b".repeat(64) } });
-  await waitFor(() => expect(setGameId).toHaveBeenCalledWith(8));
+  resolve({ data: { gameId: 8, gameCode: "KFRW", hostToken: "b".repeat(64) } });
+  await waitFor(() => expect(setGame).toHaveBeenCalledWith({ gameId: 8, gameCode: "KFRW" }));
   expect(sessionStorage.getItem("bb:host:8")).toBe("b".repeat(64));
   expect(localStorage.getItem("hostToken:8")).toBeNull();
 });

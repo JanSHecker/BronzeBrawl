@@ -16,7 +16,7 @@ export const REQUIRED_APPLICATION_COLUMNS: Record<string, readonly string[]> = {
   game: [
     'gameId', 'punishmentAmount', 'rewardAmount', 'rotationMode', 'defaultRotationCounter',
     'state', 'hostTokenHash', 'lastGameTime', 'lastFeedAt', 'rosterFingerprint', 'feedSnapshot',
-    'companionTokenHash', 'lastCompanionAt', 'companionAvailability',
+    'companionTokenHash', 'lastCompanionAt', 'companionAvailability', 'gameCode',
   ],
   team: ['teamId', 'teamName', 'gameGameId'],
   champion: ['championId', 'championName', 'summonerName', 'teamTeamId', 'riotId', 'riotIdGameName', 'riotIdTagLine'],
@@ -30,6 +30,7 @@ export const REQUIRED_APPLICATION_COLUMNS: Record<string, readonly string[]> = {
 
 export const REQUIRED_UNIQUE_CONSTRAINTS = [
   ['event', ['gameGameId', 'ingameId']],
+  ['game', ['gameCode']],
 ] as const;
 
 export const REQUIRED_FOREIGN_KEYS = [
@@ -57,6 +58,7 @@ export const REQUIRED_MIGRATIONS = [
   { name: 'GameflowSecurity1710000001000', timestamp: 1710000001000 },
   { name: 'GameflowEventIdentity1710000002000', timestamp: 1710000002000 },
   { name: 'CompanionConnection1792100000000', timestamp: 1792100000000 },
+  { name: 'GameCodes1792200000000', timestamp: 1792200000000 },
 ] as const;
 
 export type DatabaseReadiness =

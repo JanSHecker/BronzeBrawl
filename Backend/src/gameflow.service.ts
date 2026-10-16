@@ -1,7 +1,7 @@
 import { InjectDataSource } from '@nestjs/typeorm';
 import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
 import { DataSource } from 'typeorm';
-import { randomBytes, createHash, timingSafeEqual } from 'crypto';
+import { randomBytes, randomInt, createHash, timingSafeEqual } from 'crypto';
 import { Game } from './entities/game.entity';
 import { Player } from './entities/player.entity';
 import { Team } from './entities/team.entity';
@@ -132,6 +132,27 @@ export class GameflowService {
     return randomBytes(32).toString('hex');
   }
 
+  private newGameCode(): string {
+    return Array.from({ length: 4 }, () => String.fromCharCode(65 + randomInt(26))).join('');
+  }
+
+  private normalizeGameCode(value: any): string {
+    if (typeof value !== 'string' || !/^[a-z]{4}$/i.test(value.trim())) this.fail('Game code must contain four letters.');
+    return value.trim().toUpperCase();
+  }
+
+  private async findGameByCode(gameCode: string, store: Store = this.database): Promise<any | null> {
+    if (store?.getRepository) return store.getRepository(Game).findOne({ where: { gameCode } });
+    return this.findOne(Game, row => row.gameCode === gameCode, store);
+  }
+
+  private async getJoinableGame(value: any, store: Store = this.database): Promise<any> {
+    const game = await this.findGameByCode(this.normalizeGameCode(value), store);
+    if (!game) this.fail('Game not found. Check your game code.', HttpStatus.NOT_FOUND);
+    if (game.state === 'ended') this.fail('This game has ended.', HttpStatus.CONFLICT);
+    return game;
+  }
+
   private hash(token: string): string {
     return createHash('sha256').update(token).digest('hex');
   }
@@ -156,6 +177,7 @@ export class GameflowService {
   private publicGame(game: any, hostToken?: string): any {
     const result: any = {
       gameId: game.gameId,
+      gameCode: game.gameCode,
       punishmentAmount: game.punishmentAmount,
       rewardAmount: game.rewardAmount,
       rotationMode: game.rotationMode,
@@ -328,8 +350,15 @@ export class GameflowService {
     const rotationMode = input?.rotationMode;
     if (rotationMode !== 'Kills' && rotationMode !== 'Deaths') this.fail('invalid rotationMode');
     return this.transaction(async (store) => {
+      let gameCode: string;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const candidate = this.newGameCode();
+        if (!await this.findGameByCode(candidate, store)) { gameCode = candidate; break; }
+      }
+      if (!gameCode) this.fail('Could not allocate a game code. Please try again.', HttpStatus.SERVICE_UNAVAILABLE);
       const hostToken = this.token();
       const game = await this.save(Game, {
+        gameCode,
         punishmentAmount,
         rewardAmount,
         rotationMode,
@@ -345,7 +374,7 @@ export class GameflowService {
       game.teams = [blue, red];
       await this.save(Game, game, store);
       return this.publicGame(game, hostToken);
-    });
+    }, -1); // Separate advisory-lock namespace: serialize code allocation across API processes.
   }
 
   private normalizeRoster(input: any): any[] {
@@ -584,12 +613,15 @@ export class GameflowService {
     }, gameId);
   }
 
-  async createPlayer(input: { playerName: any; game: any }): Promise<any> {
+  async createPlayer(input: { playerName: any; gameCode: any }): Promise<any> {
     if (typeof input?.playerName !== 'string' || !input.playerName.trim()) this.fail('invalid playerName');
-    const gameId = this.id(input?.game, 'gameId');
+    const gameCode = this.normalizeGameCode(input?.gameCode);
+    const target = await this.getJoinableGame(gameCode);
+    const gameId = target.gameId;
     return this.transaction(async (store) => {
-      const game = await this.getGameOrFail(input.game, store);
-      if (game.state === 'ended') this.fail('game has ended', HttpStatus.CONFLICT);
+      // Resolve and check again under the game lock, including a concurrent GameEnd.
+      const game = await this.getJoinableGame(gameCode, store);
+      if (game.gameId !== gameId) this.fail('Game invitation has changed.', HttpStatus.CONFLICT);
       const rawToken = this.token();
       const player = await this.save(Player, {
         playerName: input.playerName.trim(), game, team: null, champion: null,
@@ -710,6 +742,17 @@ export class GameflowService {
   async getSettings(gameValue: any): Promise<any> {
     const game = await this.getGameOrFail(gameValue);
     return this.publicGame(game);
+  }
+
+  async getSettingsByCode(gameCode: any): Promise<any> {
+    return this.publicGame(await this.getJoinableGame(gameCode));
+  }
+
+  async getInvitation(gameId: number, hostToken: string): Promise<any> {
+    const game = await this.getGameOrFail(gameId);
+    await this.authorizeHost(game, hostToken);
+    if (game.state === 'ended') this.fail('This game has ended.', HttpStatus.CONFLICT);
+    return { gameId: game.gameId, gameCode: game.gameCode };
   }
 
   async kda(championValue: any): Promise<[number, number, number]> {

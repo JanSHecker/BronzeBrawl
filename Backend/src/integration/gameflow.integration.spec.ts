@@ -32,8 +32,8 @@ const feed = (events: any[] = []) => ({ allPlayers: roster, events: { Events: ev
   async function setup() {
     const game = await service.runGame(settings);
     await service.ingest({ gameId: game.gameId, input: feed() }, game.hostToken);
-    const a = await service.createPlayer({ playerName: 'audit-blue', game: game.gameId });
-    const b = await service.createPlayer({ playerName: 'audit-red', game: game.gameId });
+    const a = await service.createPlayer({ playerName: 'audit-blue', gameCode: game.gameCode });
+    const b = await service.createPlayer({ playerName: 'audit-red', gameCode: game.gameCode });
     const teams = (await service.getTeams(game.gameId)).teams;
     const champions = await service.getAllChampions(game.gameId);
     await service.joinTeam({ player: a.playerId, team: teams[0].teamId }, a.playerToken);
@@ -42,6 +42,28 @@ const feed = (events: any[] = []) => ({ allPlayers: roster, events: { Events: ev
     await service.chooseChampion({ player: b.playerId, champion: champions.red.find(champion => champion.championName === 'Garen').championId }, b.playerToken);
     return { game, a, b, champions, teams };
   }
+
+  test('four-letter codes are unique across services and enforced by PostgreSQL', async () => {
+    const other = new GameflowService(database);
+    const [first, second] = await Promise.all([service.runGame(settings), other.runGame(settings)]);
+    expect(first.gameCode).toMatch(/^[A-Z]{4}$/);
+    expect(second.gameCode).toMatch(/^[A-Z]{4}$/);
+    expect(first.gameCode).not.toBe(second.gameCode);
+    await expect(database.getRepository(Game).update(second.gameId, { gameCode: first.gameCode }))
+      .rejects.toMatchObject({ driverError: { code: '23505' } });
+    await expect(database.getRepository(Game).update(second.gameId, { gameCode: '1234' }))
+      .rejects.toMatchObject({ driverError: { code: '23514' } });
+
+    const restarted = new GameflowService(database);
+    expect(await restarted.getSettingsByCode(` ${first.gameCode.toLowerCase()} `)).toMatchObject({ gameId: first.gameId });
+    const player = await restarted.createPlayer({ playerName: 'audit-code-join', gameCode: first.gameCode });
+    expect(player.game).toBe(first.gameId);
+    await database.getRepository(Game).update(first.gameId, { state: 'ended' });
+    await expect(restarted.createPlayer({ playerName: 'audit-code-late', gameCode: first.gameCode }))
+      .rejects.toMatchObject({ status: 409 });
+    // Finished-game codes stay reserved, so an old link never targets a new round.
+    expect((await database.getRepository(Game).findOneBy({ gameId: first.gameId })).gameCode).toBe(first.gameCode);
+  });
 
   test('JSONB replay survives a fresh service and retains assists and configured amounts', async () => {
     const { game, a, b, champions } = await setup();
@@ -107,7 +129,7 @@ const feed = (events: any[] = []) => ({ allPlayers: roster, events: { Events: ev
 
   test('environment death with an unselected lobby player creates no spurious reward', async () => {
     const { game, b } = await setup();
-    const lobby = await service.createPlayer({ playerName: 'audit-unselected', game: game.gameId });
+    const lobby = await service.createPlayer({ playerName: 'audit-unselected', gameCode: game.gameCode });
     await service.ingest({ gameId: game.gameId, input: feed([kill(1, 'Turret_T200_L0_P3')]) }, game.hostToken);
     expect((await service.status(lobby.playerId, lobby.playerToken)).rewards).toHaveLength(0);
     expect((await service.status(b.playerId, b.playerToken))).toMatchObject({ kda: [0, 1, 0], counter: [2, 1], punishments: [{ amount: 7 }] });
@@ -117,7 +139,7 @@ const feed = (events: any[] = []) => ({ allPlayers: roster, events: { Events: ev
   test('rotation stays owned and atomic against concurrent champion selection', async () => {
     const { game, a, champions, teams } = await setup();
     await service.ingest({ gameId: game.gameId, input: feed([kill(1), kill(2)]) }, game.hostToken);
-    const c = await service.createPlayer({ playerName: 'audit-competing', game: game.gameId });
+    const c = await service.createPlayer({ playerName: 'audit-competing', gameCode: game.gameCode });
     await service.joinTeam({ player: c.playerId, team: teams[0].teamId }, c.playerToken);
     const target = champions.blue.find(champion => champion.championName === 'Lux').championId;
     const results = await Promise.allSettled([

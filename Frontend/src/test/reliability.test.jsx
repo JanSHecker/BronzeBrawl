@@ -63,14 +63,14 @@ test('all reward targets locked until mutation AND canonical refresh finish',asy
   await act(async()=>req.resolve({data:{}})); expect(onRefresh).toHaveBeenCalled(); expect(screen.getByRole('button',{name:/Two/})).toBeDisabled(); await act(async()=>refresh.resolve());
 });
 test('invite derives origin path without query, hash or host secret',()=>{
-  window.history.replaceState({},'', '/?secret=value#hash'); render(<Linkbox gameId={5}/>); expect(screen.getByText(`${window.location.origin}/name/5`)).toBeInTheDocument();
+  window.history.replaceState({},'', '/?secret=value#hash'); render(<Linkbox gameCode="KFRW"/>); expect(screen.getByText(`${window.location.origin}/name/KFRW`)).toBeInTheDocument();
 });
 test('creation rejects HTML success responses visibly and re-enables submit',async()=>{
-  axios.get.mockResolvedValue({data:'<!doctype html>'}); render(<CreationForm setGameId={vi.fn()} currentDomain='/api'/>);
+  axios.get.mockResolvedValue({data:'<!doctype html>'}); render(<CreationForm setGame={vi.fn()}/>);
   screen.getAllByRole('textbox').forEach(input=>fireEvent.change(input,{target:{value:'3'}})); fireEvent.click(screen.getByRole('button',{name:'CREATE'})); await act(async()=>{}); expect(screen.getByRole('alert')).toHaveTextContent(/invalid|response/i); expect(screen.getByRole('button',{name:'CREATE'})).toBeEnabled();
 });
 test('name submit failure resets pending and keeps session token out of localStorage',async()=>{
-  axios.post.mockRejectedValueOnce(new Error('offline')); render(<NameForm/>); fireEvent.change(screen.getByRole('textbox'),{target:{value:'Alex'}}); fireEvent.click(screen.getByRole('button',{name:'START'})); await act(async()=>{}); expect(screen.getByRole('alert')).toHaveTextContent(/offline|failed/i); expect(screen.getByRole('button',{name:'START'})).toBeEnabled();
+  axios.get.mockResolvedValueOnce({data:{gameId:5,gameCode:'KFRW'}}); axios.post.mockRejectedValueOnce(new Error('offline')); render(<NameForm gameCode="KFRW"/>); fireEvent.change(screen.getByLabelText('What is your name?'),{target:{value:'Alex'}}); fireEvent.click(screen.getByRole('button',{name:'START'})); await act(async()=>{}); expect(screen.getByRole('alert')).toHaveTextContent(/offline|failed/i); expect(screen.getByRole('button',{name:'START'})).toBeEnabled();
 });
 test('monitor describes the automatic feed without asking for tokens or pairing',async()=>{
    window.history.replaceState({},'', '/lolApi'); render(<LoLApiFeed/>); await act(async()=>{}); expect(screen.getByText(/verbinde den Companion/)).toBeInTheDocument(); expect(screen.queryByRole('textbox')).not.toBeInTheDocument(); expect(axios.post).not.toHaveBeenCalled();

@@ -5,8 +5,8 @@ import { GAME_VERSION_KEY, DEFAULT_GAME_VERSION } from '../constants';
 import processChampionName from '../nameAdjuster';
 import placeholder from '../Champion_Placeholder.png';
 import StatusIcon from './StatusIcon';
-import { CHEST_TYPES, chestDefinition } from './chestTypes';
-import { amountText, canTarget, choiceDescription, nextUnit, normalizedChoice } from './rewardFormatting';
+import { CHEST_TYPES, chestDefinition, inventoryChestType } from './chestTypes';
+import { amountText, canTarget, choiceDescription, DUMMY_RECIPIENT_ID, nextUnit, normalizedChoice, shieldText } from './rewardFormatting';
 
 function ChestPopup({ initialChest, recipients, onClose, onRefresh, ended }) {
   const [chest, setChest] = useState(initialChest);
@@ -67,7 +67,7 @@ function ChestPopup({ initialChest, recipients, onClose, onRefresh, ended }) {
         setQueued([...queue.current]);
         projected.current = predict();
         const result = data.distribution?.lastResult;
-        if (result) setFeedback(result.shieldBroken ? 'Shield broken' : amountText(result.assigned) ? `Assigned ${amountText(result.assigned)}` : 'Blocked by shield');
+        if (result) setFeedback(result.dummy ? `Assigned ${amountText(result.assigned)} to dummy` : result.shieldBroken ? 'Shield broken' : amountText(result.assigned) ? `Assigned ${amountText(result.assigned)}` : 'Blocked by shield');
       }
       await onRefresh();
     } catch (failure) {
@@ -82,7 +82,7 @@ function ChestPopup({ initialChest, recipients, onClose, onRefresh, ended }) {
   };
   const tap = player => {
     const next = projected.current || predict();
-    if (tapError || ended || !canTarget(activeChoice, next, player.playerId)) return;
+    if (tapError || !canTarget(activeChoice, next, player.playerId)) return;
     const item = { recipientId: player.playerId, unit: nextUnit(next.remaining) };
     queue.current.push(item);
     projected.current = predict();
@@ -97,13 +97,13 @@ function ChestPopup({ initialChest, recipients, onClose, onRefresh, ended }) {
     {chest.distributed ? <><div className="status-chest-result"><StatusIcon name="check" /><strong>{chest.distribution?.outcome === 'backfire' ? 'Backfired' : 'Complete'}</strong></div>
       <button className="status-button status-primary" onClick={onClose}>Done</button></>
       : !chest.openedAt ? <><div className="status-chest-cover"><StatusIcon name="chest" /></div>
-        <button className="status-button status-primary" disabled={loading || ended} onClick={() => run(async () => {
+        <button className="status-button status-primary" disabled={loading} onClick={() => run(async () => {
           const { data } = await api.post('openChest', { id: chest.rewardId });
           update(data);
           await onRefresh();
         })}>Open</button></>
         : !chest.distribution ? <><p className="status-popup-label">Choose one. Your choice is final.</p><div className="status-choices">
-          {(chest.choices || []).map(option => <button className="status-button status-choice" key={option.id} disabled={loading || ended}
+          {(chest.choices || []).map(option => <button className="status-button status-choice" key={option.id} disabled={loading}
             aria-label={option.name || 'Assign'} onClick={() => run(async () => {
               const { data } = await api.post('chooseReward', { id: chest.rewardId, choiceId: option.id });
               update(data);
@@ -122,16 +122,19 @@ function ChestPopup({ initialChest, recipients, onClose, onRefresh, ended }) {
               {activeChoice?.breaksShields && <span className="status-shield-break"><StatusIcon name="shieldBreak" />Breaks target’s entire shield</span>}
             </div>
             <div className="status-targets">{players.map(player => <button className="status-button status-target" key={player.playerId}
-              disabled={Boolean(tapError) || ended || !canTarget(activeChoice, state, player.playerId)}
-              aria-label={`Give 1 ${unit || 'unit'} to ${player.playerName}. Shield ${player.shield || 0}.`}
+              disabled={Boolean(tapError) || !canTarget(activeChoice, state, player.playerId)}
+              aria-label={`Give 1 ${unit || 'unit'} to ${player.playerName}. Shield ${shieldText(player.shield)}.`}
               onClick={() => tap(player)}>
               <img src={player.champion ? `https://static.bigbrain.gg/assets/lol/riot_static/${version}/img/champion/${processChampionName(player.champion.championName)}.png` : placeholder}
                 onError={event => { event.currentTarget.onerror = null; event.currentTarget.src = placeholder; }} alt="" />
               <span><strong>{player.playerName}</strong><small>{player.champion?.championName || 'Choosing champion'}</small></span>
-              <span className="status-shield-badge" aria-hidden="true"><StatusIcon name="shield" /><b>{player.shield || 0}</b></span>
+              <span className="status-shield-badge" aria-hidden="true"><StatusIcon name="shield" /><b>{shieldText(player.shield)}</b></span>
             </button>)}</div>
-            {!players.length && <p>Waiting for opponents to join.</p>}
+            {!players.length && <><p>No opposing players. Dummy assignments consume rewards without giving anyone punishments.</p>
+              <button className="status-button status-primary" disabled={Boolean(tapError) || !canTarget(activeChoice, state, DUMMY_RECIPIENT_ID)}
+                onClick={() => tap({ playerId: DUMMY_RECIPIENT_ID })}>Assign to dummy</button></>}
           </>}
+    {ended && !chest.distributed && <p>Champion-time effects no longer apply after the game ends.</p>}
     {feedback && <p className="status-tap-feedback" role="status">{feedback}</p>}
     {(error || tapError) && <p role="alert" className="status-popup-error">{error || tapError}</p>}
     {tapError && <button className="status-button status-primary" onClick={() => void processQueue()}>Retry tap</button>}
@@ -146,9 +149,9 @@ export default function ChestInventory({ rewards = [], enemyTeam = [], recipient
   const players = recipients || enemyTeam.filter(champion => champion.player).map(champion => ({ ...champion.player, champion }));
   return <section className="status-panel status-chests" aria-labelledby="chests-title">
     <div className="status-section-heading"><h2 id="chests-title">Chests</h2><span>{pending.length} available</span></div>
-    <div className={`status-inventory${types.length > 6 ? ' status-inventory-pentakill' : ''}`}>{types.map(type => {
-      const items = pending.filter(item => (item.chestType || 'standard') === type.type);
-      return <button key={type.type} className={`status-chest status-chest-${type.type}`} disabled={!items.length || ended}
+    <div className={`status-inventory${types.some(type => type.type === 'pentakill') ? ' status-inventory-pentakill' : ''}`}>{types.map(type => {
+      const items = pending.filter(item => inventoryChestType(item.chestType) === type.type);
+      return <button key={type.type} className={`status-chest status-chest-${type.type}`} disabled={!items.length}
         aria-label={`${type.name} chest, ${items.length} available`} title={type.name}
         onClick={event => { opener.current = event.currentTarget; setSelected(items.find(item => item.distribution) || items[0]); }}>
         <StatusIcon name="chest" /><span>{type.short}</span><strong>×{items.length}</strong>

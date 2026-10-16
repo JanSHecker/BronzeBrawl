@@ -30,6 +30,9 @@ export class Player {
   @Column({ type: 'integer', nullable: true })
   previousChampionId: number;
 
+  @Column({ type: 'double precision', nullable: true })
+  championSelectionEndsAtGameTime: number | null;
+
   @Column({ nullable: true })
   playerTokenHash: string;
 

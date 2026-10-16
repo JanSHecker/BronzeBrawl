@@ -141,13 +141,13 @@ test("two isolated players complete the secured gameflow and recover after failu
       await database.getRepository(Reward).update(status.rewards[0].rewardId, { openedAt: new Date(), choices: [choice] });
     } finally { await database.destroy(); }
     await blue.reload();
-    await blue.getByRole('button', { name: 'Kills chest, 1 available' }).click();
+    await blue.getByRole('button', { name: 'Normal chest, 1 available' }).click();
     await blue.getByRole('button', { name: 'Marked', exact: true }).click();
     await blue.getByRole('button', { name: /Give 1 sips to Audit Alex/ }).click();
     await blue.getByRole('button', { name: /Give 1 sips to Audit Alex/ }).click();
     await expect(blue.getByText('Complete', { exact: true })).toBeVisible();
     await blue.getByRole('button', { name: 'Done', exact: true }).click();
-    await expect(blue.getByRole('button', { name: 'Kills chest, 0 available' })).toBeDisabled();
+    await expect(blue.getByRole('button', { name: 'Normal chest, 0 available' })).toBeDisabled();
     for (let remaining = 9; remaining > 0; remaining--) {
       const counter = red.getByRole('button', { name: `${remaining} sips remaining. Tap to subtract one.` });
       await expect(counter).toBeEnabled();

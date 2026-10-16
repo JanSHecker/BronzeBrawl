@@ -9,6 +9,7 @@ import { PunishmentService } from './punishment.service';
 import { RewardService } from './reward.service';
 import { DistributionService } from './distribution.service';
 import { TeamService } from './team.service';
+import { GameflowService } from './gameflow.service';
 import { getDataSourceToken } from '@nestjs/typeorm';
 import { REQUIRED_APPLICATION_COLUMNS, REQUIRED_FOREIGN_KEYS, REQUIRED_MIGRATIONS, REQUIRED_UNIQUE_CONSTRAINTS } from './database/readiness';
 
@@ -80,6 +81,7 @@ describe('AppController', () => {
         { provide: RewardService, useValue: createMock() },
         { provide: DistributionService, useValue: createMock() },
         { provide: TeamService, useValue: createMock() },
+        { provide: GameflowService, useValue: new GameflowService({} as any) },
         {
           provide: getDataSourceToken(),
           useValue: {
@@ -91,6 +93,12 @@ describe('AppController', () => {
     }).compile();
 
     appController = app.get<AppController>(AppController);
+  });
+
+  it('exposes the read-only reward catalogue without a player or game token', () => {
+    expect(appController.getRewardCatalog(undefined)).toMatchObject({ difficulty: 'baseline', maxShield: 10 });
+    expect(appController.getRewardCatalog('easy').multiplier).toBe(0.5);
+    expect(() => appController.getRewardCatalog('invented')).toThrow('invalid difficulty');
   });
 
   describe('health', () => {

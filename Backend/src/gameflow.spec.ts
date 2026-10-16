@@ -118,7 +118,7 @@ describe('mystery chest foundation', () => {
     await service.ingest({ gameId: game.gameId, input }, game.hostToken);
     for (const player of [a, teammate]) {
       const rewards = (await service.status(player.playerId, player.playerToken)).rewards;
-      expect(rewards.map(row => row.chestType)).toEqual(['turret', 'epic', 'epic', 'epic', 'legendary', 'legendary']);
+      expect(rewards.map(row => row.chestType)).toEqual(['standard', 'epic', 'epic', 'epic', 'legendary', 'legendary']);
       expect(rewards.every(row => Number.isInteger(row.sourceEventId))).toBe(true);
     }
     expect((await service.status(b.playerId, b.playerToken)).rewards).toHaveLength(0);
@@ -136,7 +136,7 @@ describe('mystery chest foundation', () => {
     await service.ingest({ gameId: game.gameId, input: feed([{
       EventID: 1, EventName: 'TurretKilled', KillerName: 'Minion_T100', TurretKilled: 'Turret_T2_L_03_A',
     }]) }, game.hostToken);
-    expect((await service.status(a.playerId, a.playerToken)).rewards[0].chestType).toBe('turret');
+    expect((await service.status(a.playerId, a.playerToken)).rewards[0].chestType).toBe('standard');
     expect((await service.status(b.playerId, b.playerToken)).rewards).toHaveLength(0);
   });
 

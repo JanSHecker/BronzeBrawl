@@ -95,6 +95,16 @@ test('catalogue history describes choices, completed distributions, shields and 
   expect(screen.queryByText(/undefined/)).not.toBeInTheDocument();
 });
 
+test('history distinguishes automatic timeout assignments from manual rotations', () => {
+  const data = { player: { playerName: 'Alice' }, previousChampion: { championName: 'Ahri' }, champion: { championName: 'Lux' } };
+  render(<EventLog items={[
+    entry(1, 'champion_rotated', { ...data, automatic: true }),
+    entry(2, 'champion_rotated', data),
+  ]} />);
+  expect(screen.getByText('Alice was automatically assigned Lux after the selection timeout.')).toBeInTheDocument();
+  expect(screen.getByText('Alice rotated from Ahri to Lux.')).toBeInTheDocument();
+});
+
 test('scope changes clear previous history and ignore late responses', async () => {
   session();
   let resolve;

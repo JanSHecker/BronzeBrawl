@@ -142,6 +142,12 @@ export class AppController {
     return this.gameflowUnavailable();
   }
 
+  @Get('rewardCatalog')
+  getRewardCatalog(@Query('difficulty') difficulty) {
+    if (!this.gameflow) return this.gameflowUnavailable();
+    return this.gameflow.getRewardCatalog(difficulty);
+  }
+
   @Post('openChest')
   async openChest(@Body() input, @Headers('x-player-token') token: string) {
     if (this.gameflow) return this.gameflow.openChest(input, token);

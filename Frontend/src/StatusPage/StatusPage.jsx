@@ -10,6 +10,7 @@ import ChestInventory from './ChestInventory';
 import ChestProgress from './ChestProgress';
 import StatusIcon from './StatusIcon';
 import ChampionRotation from "./ChampionRotation";
+import { shieldText } from './rewardFormatting';
 import './status.css';
 import BronzeLogo from '../components/BronzeLogo';
 
@@ -42,7 +43,7 @@ const StatusPage = () => {
         <div className="status-panel status-player">
           <img src={status.champion ? `https://static.bigbrain.gg/assets/lol/riot_static/${version}/img/champion/${processChampionName(status.champion.championName)}.png` : placeholder}
             onError={event => { event.currentTarget.onerror = null; event.currentTarget.src = placeholder; }} alt={status.champion?.championName || 'No champion'} />
-          <div><p>{status.player?.playerName}</p><strong>{status.champion?.championName || 'No champion'}</strong><p className="status-kda" aria-label={`${status.kda[0]} kills, ${status.kda[1]} deaths, ${status.kda[2]} assists`}>{status.kda.join("/")}</p><p className="status-own-shield"><StatusIcon name="shield" />{status.player?.shield || 0}</p></div>
+          <div><p>{status.player?.playerName}</p><strong>{status.champion?.championName || 'No champion'}</strong><p className="status-kda" aria-label={`${status.kda[0]} kills, ${status.kda[1]} deaths, ${status.kda[2]} assists`}>{status.kda.join("/")}</p><p className="status-own-shield" aria-label={`Shield ${shieldText(status.player?.shield)}`}><StatusIcon name="shield" />{shieldText(status.player?.shield)}</p></div>
         </div>
         <ChampionRotation rotationRemainingSeconds={status.rotationRemainingSeconds} rotationAvailable={status.rotationAvailable}
           navigate={navigate} ended={status.gameState === "ended"} />

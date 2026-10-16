@@ -1,4 +1,4 @@
-import { rotationRemainingSeconds } from './rotation';
+import { championSelectionRemainingSeconds, rotationRemainingSeconds } from './rotation';
 import { ChampionRotationTimer1792300000000 } from '../migrations/1792300000000-ChampionRotationTimer';
 import { TimeOnlyRotation1792400000000 } from '../migrations/1792400000000-TimeOnlyRotation';
 
@@ -10,6 +10,13 @@ test('rotation time preserves fractional seconds, clamps expired timers and trea
   }
   expect(rotationRemainingSeconds(null, 0)).toBeNull();
   expect(rotationRemainingSeconds({ rotationEndsAtGameTime: 180 }, null)).toBeNull();
+});
+
+test('selection countdown uses the persisted game-time deadline only while unassigned', () => {
+  expect(championSelectionRemainingSeconds({ championSelectionEndsAtGameTime: 220 }, 190)).toBe(30);
+  expect(championSelectionRemainingSeconds({ championSelectionEndsAtGameTime: 220 }, 221)).toBe(0);
+  expect(championSelectionRemainingSeconds({ championSelectionEndsAtGameTime: 220, champion: {} }, 190)).toBeNull();
+  expect(championSelectionRemainingSeconds({}, 190)).toBeNull();
 });
 
 test('timer migration adds a nullable fractional game-time deadline and is reversible', async () => {

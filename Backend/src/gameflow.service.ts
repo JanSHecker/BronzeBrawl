@@ -12,8 +12,8 @@ import { Reward } from './entities/reward.entity';
 import { Punishment } from './entities/punishment.entity';
 import { CHEST_MILESTONES, ChestProgressKey, objectiveMilestone } from './chests';
 import { ActivityLog, ActivityType } from './entities/activity-log.entity';
-import { rotationRemainingSeconds, TIME_ROTATION_DURATION_SECONDS } from './rotation';
-import { Amounts, Difficulty, RewardChoice, RewardDistribution, REWARD_UNITS, drawChoices, emptyAmounts, nextRewardUnit, rewardConfiguration, scaledChoice, scaleAmounts, sipVolume, targetAllowed, unitCount } from './rewards';
+import { championSelectionRemainingSeconds, CHAMPION_SELECTION_GRACE_SECONDS, rotationRemainingSeconds, TIME_ROTATION_DURATION_SECONDS } from './rotation';
+import { Amounts, Difficulty, RewardChoice, RewardDistribution, REWARD_UNITS, MAX_SHIELD, DUMMY_RECIPIENT_ID, drawChoices, emptyAmounts, nextRewardUnit, rewardConfiguration, scaledChoice, scaleAmounts, sipVolume, targetAllowed, unitCount } from './rewards';
 import { baseChampionName, CombatTracker, MULTIKILL_CHESTS, NEUTRAL_OBJECTIVES, spreeChest, spreeName, TIMELINE_EVENT_BASE } from './game-events';
 
 export class GameflowError extends HttpException {
@@ -410,6 +410,17 @@ export class GameflowService {
     };
   }
 
+  getRewardCatalog(difficulty: Difficulty = 'baseline'): any {
+    if (!['easy', 'baseline', 'hard', 'terror'].includes(difficulty)) this.fail('invalid difficulty');
+    return {
+      difficulty, multiplier: this.rewardConfig.multipliers[difficulty],
+      conversions: { ...this.rewardConfig.conversions }, maxShield: MAX_SHIELD,
+      pools: Object.fromEntries(Object.entries(this.rewardConfig.pools).map(([pool, choices]) => [
+        pool, choices.map(choice => scaledChoice(choice, difficulty, this.rewardConfig)),
+      ])),
+    };
+  }
+
   async runGame(input: GameInput): Promise<any> {
     const punishmentAmount = this.numberSetting(input?.punishmentAmount, 'punishmentAmount');
     const rewardAmount = this.numberSetting(input?.rewardAmount, 'rewardAmount');
@@ -654,25 +665,88 @@ export class GameflowService {
     return rows.filter(row => this.gameId(row.team?.game) === gameId);
   }
 
-  private async releaseChampion(player: any, game: any, store: Store): Promise<void> {
+  private async releaseChampion(player: any, game: any, store: Store, releasedAt = game.lastGameTime): Promise<void> {
     if (!player.champion) return;
     const champion = await this.byId(Champion, this.championId(player.champion), store, ['player', 'team', 'team.game']);
     if (!champion || (champion.player && this.playerId(champion.player) !== player.playerId)) this.fail('champion ownership changed', HttpStatus.CONFLICT);
     player.previousChampionId = champion.championId;
     player.champion = null;
+    player.championSelectionEndsAtGameTime = typeof releasedAt === 'number'
+      ? releasedAt + CHAMPION_SELECTION_GRACE_SECONDS : null;
     champion.player = null;
     champion.rotationEndsAtGameTime = null;
     await this.save(Player, player, store);
     await this.save(Champion, champion, store);
     await this.recordActivity(store, game, 'champion_expired', {
       player: this.activityPlayer(player), champion: { championId: champion.championId, championName: champion.championName },
-    });
+    }, releasedAt);
+  }
+
+  private async takeChampion(player: any, champion: any, previousChampion: any, game: any, store: Store, at: number, automatic = false): Promise<void> {
+    champion.player = player;
+    champion.rotationEndsAtGameTime = at + TIME_ROTATION_DURATION_SECONDS;
+    player.champion = champion;
+    player.previousChampionId = previousChampion?.championId || player.previousChampionId || null;
+    player.championSelectionEndsAtGameTime = null;
+    await this.save(Champion, champion, store);
+    await this.save(Player, player, store);
+    await this.recordActivity(store, game, previousChampion ? 'champion_rotated' : 'champion_selected', {
+      player: this.activityPlayer(player), previousChampion,
+      champion: { championId: champion.championId, championName: champion.championName },
+      ...(automatic ? { automatic: true } : {}),
+    }, at);
   }
 
   private async expireChampions(players: any[], game: any, at: number, store: Store): Promise<void> {
-    if (game.state === 'ended' || typeof at !== 'number') return;
+    if (game.state === 'ended' || typeof at !== 'number' || !Number.isFinite(at)) return;
+    at = Math.max(at, game.lastGameTime ?? at);
     for (const player of players) {
-      if (player.champion && rotationRemainingSeconds(player.champion, at) === 0) await this.releaseChampion(player, game, store);
+      if (player.champion && rotationRemainingSeconds(player.champion, at) === 0) {
+        await this.releaseChampion(player, game, store, player.champion.rotationEndsAtGameTime);
+      }
+      // Legacy waiting players with no clock at migration time get a full grace period.
+      if (!player.champion && player.previousChampionId && player.championSelectionEndsAtGameTime == null) {
+        player.championSelectionEndsAtGameTime = at + CHAMPION_SELECTION_GRACE_SECONDS;
+        await this.save(Player, player, store);
+      }
+    }
+    const waiting = players.filter(player => player.team && player.previousChampionId
+      && championSelectionRemainingSeconds(player, at) === 0)
+      .sort((a, b) => a.championSelectionEndsAtGameTime - b.championSelectionEndsAtGameTime || a.playerId - b.playerId);
+    if (!waiting.length) return;
+    // Read after all expirations so simultaneous rotations can use newly freed slots.
+    const champions = await this.gameChampions(game.gameId, store);
+    const candidates = new Map<any, any[]>();
+    for (const player of waiting) {
+      const eligible = champions.filter(champion => this.teamId(champion.team) === this.teamId(player.team)
+        && champion.championId !== player.previousChampionId && !champion.player
+        && !players.some(owner => this.championId(owner.champion) === champion.championId));
+      const offset = eligible.length ? randomInt(eligible.length) : 0;
+      candidates.set(player, [...eligible.slice(offset), ...eligible.slice(0, offset)]);
+    }
+    // Plan before saving: a greedy pick can strand the last player on their own
+    // previous champion even when a valid assignment exists for the whole team.
+    const assignments = new Map<number, any>();
+    const assign = (player: any, visited: Set<number>): boolean => {
+      for (const champion of candidates.get(player)) {
+        if (visited.has(champion.championId)) continue;
+        visited.add(champion.championId);
+        const other = assignments.get(champion.championId);
+        if (!other || assign(other, visited)) {
+          assignments.set(champion.championId, player);
+          return true;
+        }
+      }
+      return false;
+    };
+    for (const player of waiting) assign(player, new Set());
+    for (const player of waiting) {
+      const champion = champions.find(row => assignments.get(row.championId) === player);
+      if (!champion) continue;
+      const previous = await this.byId(Champion, player.previousChampionId, store);
+      await this.takeChampion(player, champion, previous ? {
+        championId: previous.championId, championName: previous.championName,
+      } : null, game, store, at, true);
     }
   }
 
@@ -926,7 +1000,7 @@ export class GameflowService {
       const player = await this.save(Player, {
         playerName: input.playerName.trim(), game, team: null, champion: null,
         chestProgress: {},
-        shield: 0, previousChampionId: null,
+        shield: 0, previousChampionId: null, championSelectionEndsAtGameTime: null,
         playerTokenHash: this.hash(rawToken),
       }, store);
       await this.recordActivity(store, game, 'player_joined', { player: this.activityPlayer(player) });
@@ -1044,16 +1118,7 @@ export class GameflowService {
         currentChampion.rotationEndsAtGameTime = null;
         await this.save(Champion, currentChampion, store);
       }
-      champion.player = player;
-      champion.rotationEndsAtGameTime = game.lastGameTime + TIME_ROTATION_DURATION_SECONDS;
-      player.champion = champion;
-      player.previousChampionId = previousChampion?.championId || player.previousChampionId || null;
-      await this.save(Champion, champion, store);
-      await this.save(Player, player, store);
-      await this.recordActivity(store, game, previousChampion ? 'champion_rotated' : 'champion_selected', {
-        player: this.activityPlayer(player), previousChampion,
-        champion: { championId: champion.championId, championName: champion.championName },
-      });
+      await this.takeChampion(player, champion, previousChampion, game, store, game.lastGameTime);
       return this.publicChampion(champion);
     }, gameId);
   }
@@ -1122,6 +1187,7 @@ export class GameflowService {
       difficulty: game.difficulty || 'baseline',
       rotationRemainingSeconds: champion ? rotationRemainingSeconds(champion, game.lastGameTime) : player.previousChampionId ? 0 : null,
       rotationAvailable: game.state !== 'ended' && (!champion || rotationRemainingSeconds(champion, game.lastGameTime) === 0),
+      championSelectionRemainingSeconds: game.state === 'ended' ? null : championSelectionRemainingSeconds(player, game.lastGameTime),
     };
   }
 
@@ -1160,12 +1226,14 @@ export class GameflowService {
         }
       }
       const game = await this.getGameOrFail(owner.game, store);
-      if (game.state === 'ended') this.fail('game has ended', HttpStatus.CONFLICT);
-      const recipientId = this.id(request?.punishment?.recipient?.playerId, 'recipient');
-      const recipient = await this.getPlayerOrFail(recipientId, store);
-      if (this.gameId(recipient.game) !== game.gameId) this.fail('recipient belongs to another game', HttpStatus.FORBIDDEN);
-      if (!owner.team || !recipient.team || this.teamId(owner.team) === this.teamId(recipient.team)) this.fail('recipient must be an opposing teammate');
-      const result = await this.assignUnits(recipient, owner, { sips: reward.amount }, game, store, { rewardId });
+      const recipientId = request?.punishment?.recipient?.playerId;
+      const dummy = recipientId === DUMMY_RECIPIENT_ID;
+      if (dummy && (await this.rewardOpponents(owner, store)).length) this.fail('dummy assignments are only available without opponents', HttpStatus.FORBIDDEN);
+      const recipient = dummy ? null : await this.getPlayerOrFail(this.id(recipientId, 'recipient'), store);
+      if (recipient && this.gameId(recipient.game) !== game.gameId) this.fail('recipient belongs to another game', HttpStatus.FORBIDDEN);
+      if (recipient && (!owner.team || !recipient.team || this.teamId(owner.team) === this.teamId(recipient.team))) this.fail('recipient must be an opposing teammate');
+      const result = dummy ? this.dummyAssignment({ sips: reward.amount })
+        : await this.assignUnits(recipient, owner, { sips: reward.amount }, game, store, { rewardId });
       const punishment = result.punishments[0];
       reward.distributed = true;
       await this.save(Reward, reward, store);
@@ -1174,7 +1242,7 @@ export class GameflowService {
         player: this.activityPlayer(owner), recipient: this.activityPlayer(recipient),
       };
       await this.recordActivity(store, game, 'reward_distributed', distribution);
-      return punishment ? this.publicPunishment(punishment) : { blocked: true, shield: recipient.shield || 0 };
+      return dummy ? result : punishment ? this.publicPunishment(punishment) : { blocked: true, shield: recipient.shield || 0 };
     });
   }
 
@@ -1187,17 +1255,15 @@ export class GameflowService {
       await this.lockGame(store, this.gameId(preview.game));
       reward = await this.byId(Reward, id, store, ['player']);
       if (!reward) this.fail('reward not found', HttpStatus.NOT_FOUND);
-      if (!reward) this.fail('reward not found', HttpStatus.NOT_FOUND);
       const owner = await this.authorizePlayer(this.playerId(reward.player), token, store);
       if (reward.distributed) this.fail('reward already consumed', HttpStatus.CONFLICT);
       if (!reward.openedAt) {
         const game = await this.getGameOrFail(owner.game, store);
-        if (game.state === 'ended') this.fail('game has ended', HttpStatus.CONFLICT);
         const opponents = await this.rewardOpponents(owner, store);
-        const pool = this.rewardConfig.pools[reward.chestType === 'support' ? 'standard' : reward.chestType || 'standard'];
+        const pool = this.rewardConfig.pools[['support', 'turret'].includes(reward.chestType) ? 'standard' : reward.chestType || 'standard'];
         if (!pool) this.fail('unknown chest type');
         const eligible = pool.map(choice => scaledChoice(choice, (game.difficulty || 'baseline') as Difficulty, this.rewardConfig))
-          .filter(choice => this.choiceEligible(choice, owner, opponents));
+          .filter(choice => this.choiceEligible(choice, owner, opponents, game));
         if (eligible.length < (reward.chestType === 'pentakill' ? 1 : 2) || (reward.chestType === 'revenge' && !['small', 'risky'].every(tier => eligible.some(choice => choice.tier === tier)))) {
           this.fail('not enough eligible rewards; select a champion or wait for opponents', HttpStatus.CONFLICT);
         }
@@ -1218,8 +1284,15 @@ export class GameflowService {
       .filter(row => this.gameId(row.game) === this.gameId(owner.game) && row.team && owner.team && this.teamId(row.team) !== this.teamId(owner.team));
   }
 
-  private choiceEligible(choice: RewardChoice, owner: any, opponents: any[]): boolean {
-    if ((choice.timeSeconds || choice.failureTimeSeconds || choice.forceSwitch) && !owner.champion) return false;
+  private dummyAssignment(amounts: Partial<Amounts>): any {
+    return { playerId: DUMMY_RECIPIENT_ID, dummy: true, assigned: { ...emptyAmounts(), ...amounts },
+      shieldBefore: 0, shield: 0, shieldBroken: false, punishments: [] };
+  }
+
+  private choiceEligible(choice: RewardChoice, owner: any, opponents: any[], game: any): boolean {
+    if (game.state !== 'ended' && (choice.timeSeconds || choice.failureTimeSeconds || choice.forceSwitch) && !owner.champion) return false;
+    // The dummy sink can consume any recipient budget without creating fake players.
+    if (!opponents.length) return true;
     if (choice.mode !== 'self' && opponents.length < (choice.minTargets || 1)) return false;
     if (unitCount(choice.randomBonus) && opponents.length < 2) return false;
     if (choice.minTargets && !choice.perTarget && unitCount(choice.amounts) < choice.minTargets) return false;
@@ -1246,6 +1319,7 @@ export class GameflowService {
   }
 
   private async adjustRewardTime(owner: any, game: any, store: Store, seconds = 0, force = false): Promise<void> {
+    if (game.state === 'ended') return;
     if (!seconds && !force) return;
     if (!owner.champion || typeof game.lastGameTime !== 'number') this.fail('select a champion before using this reward', HttpStatus.CONFLICT);
     if (force) return this.releaseChampion(owner, game, store);
@@ -1262,7 +1336,6 @@ export class GameflowService {
         if (reward.distribution.choiceId !== request.choiceId) this.fail('reward choice is already committed', HttpStatus.CONFLICT);
         return this.rewardResponse(reward, owner, store);
       }
-      if (game.state === 'ended') this.fail('game has ended', HttpStatus.CONFLICT);
       if (reward.distributed) this.fail('reward already consumed', HttpStatus.CONFLICT);
       const saved = reward.openedAt && reward.choices?.find(choice => choice.id === request.choiceId);
       if (!saved) this.fail('invalid chest choice');
@@ -1270,22 +1343,22 @@ export class GameflowService {
       const choice: RewardChoice = saved.effect === 'assign'
         ? { ...saved, mode: 'single', amounts: { sips: saved.amount }, conversions: this.rewardConfig.conversions } : saved;
       const opponents = await this.rewardOpponents(owner, store);
-      if (!this.choiceEligible(choice, owner, opponents)) this.fail('reward is not currently usable', HttpStatus.CONFLICT);
+      if (!this.choiceEligible(choice, owner, opponents, game)) this.fail('reward is not currently usable', HttpStatus.CONFLICT);
       const success = choice.successChance === undefined || randomInt(1_000_000_000) / 1_000_000_000 < choice.successChance;
       const remaining = { ...emptyAmounts(), ...choice.amounts };
       if (choice.perTarget) for (const unit of REWARD_UNITS) remaining[unit] *= choice.minTargets;
-      if (choice.mode === 'enemy_team') for (const unit of REWARD_UNITS) remaining[unit] *= opponents.length;
+      if (choice.mode === 'enemy_team') for (const unit of REWARD_UNITS) remaining[unit] *= Math.max(1, opponents.length);
       if (!success) for (const unit of REWARD_UNITS) remaining[unit] = 0;
       const state: RewardDistribution = { choiceId: choice.id, remaining, version: 0, targets: {}, outcome: success ? 'success' : 'backfire' };
       reward.distribution = state;
       await this.assignUnits(owner, owner, success ? choice.selfAmounts || {} : choice.failureAmounts || {}, game, store, { rewardId: reward.rewardId, conversions: choice.conversions, reason: 'reward_cost' });
       await this.adjustRewardTime(owner, game, store, success ? choice.timeSeconds : choice.failureTimeSeconds, success && choice.forceSwitch);
       if (success && choice.shieldPoints) {
-        owner.shield = (owner.shield || 0) + choice.shieldPoints;
+        owner.shield = Math.min(MAX_SHIELD, (owner.shield || 0) + choice.shieldPoints);
         await this.save(Player, owner, store);
         await this.recordActivity(store, game, 'shield_changed', { player: this.activityPlayer(owner), shield: owner.shield, rewardId: reward.rewardId });
       }
-      if (success && choice.mode === 'enemy_team') {
+      if (success && opponents.length && choice.mode === 'enemy_team') {
         for (const recipient of opponents) {
           const result = await this.assignUnits(recipient, owner, choice.amounts, game, store, { breaksShields: choice.breaksShields, conversions: choice.conversions, rewardId: reward.rewardId });
           state.targets[String(recipient.playerId)] = { ...emptyAmounts(), ...choice.amounts };
@@ -1293,7 +1366,7 @@ export class GameflowService {
         }
         for (const unit of REWARD_UNITS) remaining[unit] = 0;
       }
-      if (success && ['random', 'scatter', 'team'].includes(choice.mode)) {
+      if (success && opponents.length && ['random', 'scatter', 'team'].includes(choice.mode)) {
         const selected = opponents[randomInt(opponents.length)];
         let index = 0;
         for (const unit of REWARD_UNITS) {
@@ -1321,20 +1394,23 @@ export class GameflowService {
       // A lost response may be retried, including the final tap. Never assign twice.
       if (request.expectedVersion < state.version) return this.rewardResponse(reward, owner, store);
       if (request.expectedVersion !== state.version || reward.distributed) this.fail('distribution changed', HttpStatus.CONFLICT);
-      if (game.state === 'ended') this.fail('game has ended', HttpStatus.CONFLICT);
       const saved = reward.choices.find(choice => choice.id === state.choiceId);
       const choice: RewardChoice = saved.effect === 'assign'
         ? { ...saved, mode: 'single', amounts: { sips: saved.amount }, conversions: this.rewardConfig.conversions } : saved;
       const unit = nextRewardUnit(state.remaining);
       if (!unit || request.unit !== unit) this.fail('distribute sips, then shots, then chugs');
       const opponents = await this.rewardOpponents(owner, store);
-      const recipient = opponents.find(row => row.playerId === this.id(request.recipientId, 'recipient'));
-      if (!recipient) this.fail('recipient must be an opponent in this game', HttpStatus.FORBIDDEN);
-      if (!targetAllowed(choice, state, recipient.playerId)) this.fail('choose another opponent for this reward');
-      state.lastResult = await this.assignUnits(recipient, owner, { [unit]: 1 }, game, store, { breaksShields: choice.breaksShields, conversions: choice.conversions, rewardId: reward.rewardId });
+      const dummy = request.recipientId === DUMMY_RECIPIENT_ID;
+      if (dummy && opponents.length) this.fail('dummy assignments are only available without opponents', HttpStatus.FORBIDDEN);
+      const recipientId = dummy ? DUMMY_RECIPIENT_ID : this.id(request.recipientId, 'recipient');
+      const recipient = opponents.find(row => row.playerId === recipientId);
+      if (!dummy && !recipient) this.fail('recipient must be an opponent in this game', HttpStatus.FORBIDDEN);
+      if (!targetAllowed(choice, state, recipientId)) this.fail('choose another opponent for this reward');
+      state.lastResult = dummy ? this.dummyAssignment({ [unit]: 1 })
+        : await this.assignUnits(recipient, owner, { [unit]: 1 }, game, store, { breaksShields: choice.breaksShields, conversions: choice.conversions, rewardId: reward.rewardId });
       state.lastResult.punishments = state.lastResult.punishments.map(row => this.publicPunishment(row));
-      state.targets[String(recipient.playerId)] ||= emptyAmounts();
-      state.targets[String(recipient.playerId)][unit]++;
+      state.targets[String(recipientId)] ||= emptyAmounts();
+      state.targets[String(recipientId)][unit]++;
       state.remaining[unit]--;
       state.version++;
       reward.distributed = unitCount(state.remaining) === 0;

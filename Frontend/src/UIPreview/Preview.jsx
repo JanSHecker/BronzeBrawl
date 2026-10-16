@@ -8,6 +8,7 @@ import ChestInventory from '../StatusPage/ChestInventory';
 import ChestProgress from '../StatusPage/ChestProgress';
 import PunishmentCounters from '../StatusPage/PunishmentCounters';
 import ChampionRotation from '../StatusPage/ChampionRotation';
+import { shieldText } from '../StatusPage/rewardFormatting';
 import placeholder from '../Champion_Placeholder.png';
 import bronzeLogo from '../bronzeIcon150.png';
 import { createPreviewGame } from './mockGame';
@@ -63,7 +64,7 @@ function GamePreview() {
         <div>
           <p>{status.player.playerName}</p><strong>Yasuo</strong>
           <p className="status-kda" aria-label="8 kills, 5 deaths, 12 assists">8/5/12</p>
-          <p className="status-own-shield"><StatusIcon name="shield" />{status.player.shield}</p>
+          <p className="status-own-shield" aria-label={`Shield ${shieldText(status.player.shield)}`}><StatusIcon name="shield" />{shieldText(status.player.shield)}</p>
         </div>
       </div>
       <ChampionRotation rotationRemainingSeconds={138} rotationAvailable={false} ended={false} />

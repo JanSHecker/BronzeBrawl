@@ -1,4 +1,8 @@
+import { MAX_SHIELD } from '../constants';
+
+export const shieldText = shield => `${shield || 0}/${MAX_SHIELD}`;
 export const UNITS = ['sips', 'shots', 'chugs'];
+export const DUMMY_RECIPIENT_ID = 'dummy';
 export const nextUnit = amounts => UNITS.find(unit => amounts?.[unit] > 0);
 export const amountText = amounts => UNITS.filter(unit => amounts?.[unit]).map(unit => `${amounts[unit]} ${unit}`).join(' + ');
 export const normalizedChoice = choice => choice.effect === 'assign'
@@ -16,7 +20,7 @@ export function choiceDescription(input) {
   if (choice.timeSeconds) parts.push(`${choice.timeSeconds > 0 ? '+' : '−'}${Math.abs(choice.timeSeconds)}s champion lifetime`);
   if (choice.forceSwitch) parts.push('Switch champion immediately');
   if (amountText(choice.selfAmounts)) parts.push(`You receive ${amountText(choice.selfAmounts)}`);
-  if (choice.shieldPoints) parts.push(`Gain ${choice.shieldPoints} shield points`);
+  if (choice.shieldPoints) parts.push(`Gain ${Math.min(MAX_SHIELD, choice.shieldPoints)} shield points (max ${MAX_SHIELD} total)`);
   if (choice.successChance !== undefined) {
     const failure = [amountText(choice.failureAmounts) && `you receive ${amountText(choice.failureAmounts)}`, choice.failureTimeSeconds && `+${choice.failureTimeSeconds}s on your champion`].filter(Boolean).join('; ');
     parts.push(`${Math.round(choice.successChance * 100)}% success. Otherwise: ${failure}`);
@@ -26,7 +30,8 @@ export function choiceDescription(input) {
 
 export function canTarget(choice, state, recipientId) {
   if (!choice || !state) return false;
-  const targets = Object.keys(state.targets || {});
+  if (recipientId === DUMMY_RECIPIENT_ID) return Boolean(nextUnit(state.remaining));
+  const targets = Object.keys(state.targets || {}).filter(id => id !== DUMMY_RECIPIENT_ID);
   const existing = state.targets?.[String(recipientId)];
   if (!existing && targets.length >= (choice.mode === 'single' ? 1 : choice.maxTargets || Infinity)) return false;
   const unit = nextUnit(state.remaining);

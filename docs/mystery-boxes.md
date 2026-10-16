@@ -11,7 +11,7 @@ one persistent chest and resets only that milestone's progress.
 | Kills | Each champion kill | Standard on spree 1–2, Epic on 3–7, Legendary on 8+ | Player controlling the killer |
 | Assists | 2 champion assists | Support | Player controlling the assister |
 | Revenge | 3 deaths, including environment deaths | Revenge | Player controlling the victim |
-| Turret | 1 destroyed turret | Turret | Every joined player on the attacking team |
+| Turret | 1 destroyed turret | Normal | Every joined player on the attacking team |
 | Grubs / Herald / Dragon | 1 Herald/Dragon, or majority of a completed three-grub group | Epic | Every joined player on the winning team |
 | Baron / Elder | 1 objective event | Legendary | Every joined player on the killer's team |
 
@@ -58,6 +58,12 @@ assign one chug to each enemy, and grant the owner ten shield points at baseline
 difficulty. Drinking quantities and the grant scale normally; allied shields are
 never broken. Choosing resolves the whole effect atomically.
 
+Without opposing BronzeBrawl players, distributed rewards instead expose an
+**Assign to dummy** sink, including random/team effects and Pentakill. No fake
+players or punishments are created. Chests and punishments remain resolvable
+after game end; champion-time effects no longer apply. See the
+[settlement rules](unique-rewards.md#offers-and-commitment).
+
 ## Punishments
 
 Punishments retain their original `amount` and separately store `remainingAmount`
@@ -96,6 +102,7 @@ npm run test:status
 `test:status` uses synthetic HTTP fixtures, starts only Vite, and needs a Playwright
 browser (`npx playwright install chromium`, or set
 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`). It checks 320×480 through 390×844 layouts,
-square portraits, six chests in one row, centered dialogs, reload recovery, and
-single-unit punishment taps. `npm run test:e2e` additionally needs the disposable
+square portraits, rarity-labelled chests in one row, centered dialogs, reload
+recovery, solo dummy assignments, post-game settlement, and single-unit punishment
+taps. `npm run test:e2e` additionally needs the disposable
 PostgreSQL database and built backend to exercise the real HTTP gameflow.

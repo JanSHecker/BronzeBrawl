@@ -2,6 +2,8 @@ import { randomInt } from 'crypto';
 import defaults from './reward-catalog.json';
 
 export const REWARD_UNITS = ['sips', 'shots', 'chugs'] as const;
+export const MAX_SHIELD = 10;
+export const DUMMY_RECIPIENT_ID = 'dummy';
 export type RewardUnit = typeof REWARD_UNITS[number];
 export type Amounts = Record<RewardUnit, number>;
 export type Difficulty = 'easy' | 'baseline' | 'hard' | 'terror';
@@ -121,6 +123,7 @@ export function scaledChoice(choice: RewardChoice, difficulty: Difficulty, confi
   result.shieldPoints = Math.ceil(sipVolume(choice.shield || {}, config.conversions) * multiplier);
   if (!Number.isSafeInteger(result.shieldPoints) || result.shieldPoints > 1_000_000
     || ['amounts', 'selfAmounts', 'failureAmounts', 'randomBonus'].some(field => unitCount(result[field]) > 1000)) throw new Error(`Reward exceeds supported budget: ${choice.id}`);
+  result.shieldPoints = Math.min(MAX_SHIELD, result.shieldPoints);
   return result;
 }
 
@@ -135,8 +138,9 @@ export function drawChoices(pool: RewardChoice[], revenge = false): RewardChoice
   return [first, pick(pool.filter(choice => choice.id !== first.id))].filter(Boolean);
 }
 
-export function targetAllowed(choice: RewardChoice, state: RewardDistribution, recipientId: number): boolean {
-  const targets = Object.keys(state.targets);
+export function targetAllowed(choice: RewardChoice, state: RewardDistribution, recipientId: number | string): boolean {
+  if (recipientId === DUMMY_RECIPIENT_ID) return Boolean(nextRewardUnit(state.remaining));
+  const targets = Object.keys(state.targets).filter(id => id !== DUMMY_RECIPIENT_ID);
   const existing = state.targets[String(recipientId)];
   const maximum = choice.mode === 'single' ? 1 : choice.maxTargets || Infinity;
   if (!existing && targets.length >= maximum) return false;

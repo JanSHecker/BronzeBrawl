@@ -16,16 +16,28 @@ champion cannot be immediately reselected, even after reload or restart.
 "Switch now" rewards perform that release immediately. They are not permission
 to keep the old champion until a convenient time.
 
-Selection is still manual and exclusive: rewards never displace another player.
-When every alternative is occupied, the player has no active champion and sees
-a waiting state until another alternative is released. Single-champion teams
-cannot rotate to a different champion. A later coordinated-swap policy would be
-a separate game-rule decision.
+After a rotation expires or a reward forces a switch, the player has **30 game
+seconds** to choose a different champion. The selection screen displays a
+server-owned countdown. On the first accepted feed update at or after the
+deadline, the backend randomly assigns an unoccupied champion on the player's
+team, excluding their previous champion. The new ownership gets a full 180 seconds.
+Initial champion selection has no automatic-assignment timeout.
+
+Selection remains exclusive: automatic assignments never displace another player.
+If every alternative is occupied, the deadline stays expired and assignment is
+retried on subsequent feeds until an eligible champion becomes available.
+Single-champion teams cannot rotate to a different champion. Simultaneous
+expirations release all champions before automatic assignments are considered.
 
 The clock only advances with accepted LoL snapshots. Pauses, disconnected feeds,
 browser reloads and backend restarts do not consume wall-clock time or reset the
 deadline. Selection requires a known game clock, and GameEnd blocks rotation.
 The displayed time updates with the feed rather than guessing between snapshots.
+The 30-second selection deadline is persisted on the player, so reloads and
+backend restarts cannot reset it. Natural expiry starts the grace period at the
+champion's actual deadline, even when the next snapshot arrives late. Forced
+switches start it at the latest accepted game time. Automatic assignments are
+logged and run under the same game lock as manual selection and feed ingestion.
 
 ## Reward effects
 
@@ -46,6 +58,11 @@ startup runs pending migrations). Active legacy champion owners receive a new
 three-minute timer from the last recorded game clock. Existing deadlines are
 preserved. If a legacy game has no clock yet, the first timed snapshot starts
 its missing timers.
+
+`ChampionAutoSelection1792900000000` adds the persisted selection deadline and
+gives already-waiting rotated players 30 seconds from the last accepted game time.
+Status exposes `championSelectionRemainingSeconds` (null when not selecting or
+after GameEnd); clients do not submit or control this deadline.
 
 Obsolete mode/counter columns remain in the database solely to preserve data
 and rollback compatibility, but are not mapped, exposed, or used by the app.

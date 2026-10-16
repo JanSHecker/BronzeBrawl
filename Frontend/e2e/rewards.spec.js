@@ -75,23 +75,23 @@ test('opening saves two choices, reload never rerolls, and revenge offers small 
 test('mixed rewards distribute sips then shots then chugs, survive reload, and break ALL shields', async ({ page }, info) => {
   await page.setViewportSize({ width: 320, height: 480 });
   const context = await setupRewardGame(database);
-  await database.getRepository(Player).update(context.opponents[0].playerId, { shield: 100 });
+  await database.getRepository(Player).update(context.opponents[0].playerId, { shield: 10 });
   const { reward } = await seedReward(database, context, 'legendary', 'kings-decree', { amounts: { sips: 2, shots: 1, chugs: 1 } });
   await enterGame(page, context);
-  await page.getByRole('button', { name: 'Baron / Elder chest, 1 available' }).click();
+  await page.getByRole('button', { name: 'Legendary chest, 1 available' }).click();
   await page.getByRole('button', { name: 'King’s Decree', exact: true }).click();
-  const target = page.getByRole('button', { name: 'Give 1 sips to Garen. Shield 100.' });
-  await expect(target.locator('.status-shield-badge')).toHaveText('100');
+  const target = page.getByRole('button', { name: 'Give 1 sips to Garen. Shield 10/10.' });
+  await expect(target.locator('.status-shield-badge')).toHaveText('10/10');
   await expect(page.getByText('Breaks target’s entire shield', { exact: true })).toBeVisible();
   await page.screenshot({ path: info.outputPath('mobile-shield-before.png') });
   await target.click();
-  await expect(page.getByRole('button', { name: 'Give 1 sips to Garen. Shield 0.' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Give 1 sips to Garen. Shield 0/10.' })).toBeEnabled();
   expect((await context.service.status(context.opponents[0].playerId, context.opponents[0].playerToken)).punishmentTotals.sips).toBe(1);
   await page.reload();
-  await page.getByRole('button', { name: 'Baron / Elder chest, 1 available' }).click();
+  await page.getByRole('button', { name: 'Legendary chest, 1 available' }).click();
   await expect(page.getByText('Distribute sips · 1 remaining')).toBeVisible();
   for (const unit of ['sips', 'shots', 'chugs']) {
-    await page.getByRole('button', { name: `Give 1 ${unit} to Garen. Shield 0.` }).click();
+    await page.getByRole('button', { name: `Give 1 ${unit} to Garen. Shield 0/10.` }).click();
     if (unit !== 'chugs') await expect(page.getByText(`Distribute ${unit === 'sips' ? 'shots' : 'chugs'} · 1 remaining`)).toBeVisible();
   }
   await expect(page.getByText('Complete', { exact: true })).toBeVisible();
@@ -108,19 +108,19 @@ test('a lost tap response retries the same request without double assigning', as
   const context = await setupRewardGame(database);
   await seedReward(database, context, 'standard', 'marked');
   await enterGame(page, context);
-  await page.getByRole('button', { name: 'Kills chest, 1 available' }).click();
+  await page.getByRole('button', { name: 'Normal chest, 1 available' }).click();
   await page.getByRole('button', { name: 'Marked', exact: true }).click();
   await page.route('**/api/distributeReward', async route => {
     const response = await route.fetch();
     expect(response.ok()).toBe(true);
     await route.abort('failed');
   }, { times: 1 });
-  await page.getByRole('button', { name: 'Give 1 sips to Garen. Shield 0.' }).click();
+  await page.getByRole('button', { name: 'Give 1 sips to Garen. Shield 0/10.' }).click();
   await expect(page.getByRole('button', { name: 'Retry tap' })).toBeVisible();
   await page.getByRole('button', { name: 'Retry tap' }).click();
   await expect(page.getByText('Distribute sips · 1 remaining')).toBeVisible();
   expect((await context.service.status(context.opponents[0].playerId, context.opponents[0].playerToken)).punishmentTotals.sips).toBe(1);
-  await page.getByRole('button', { name: 'Give 1 sips to Garen. Shield 0.' }).click();
+  await page.getByRole('button', { name: 'Give 1 sips to Garen. Shield 0/10.' }).click();
   await expect(page.getByText('Complete', { exact: true })).toBeVisible();
   expect((await context.service.status(context.opponents[0].playerId, context.opponents[0].playerToken)).punishmentTotals.sips).toBe(2);
 });
@@ -129,9 +129,9 @@ test('rapid taps are queued, conserve the budget and require no confirmation', a
   const context = await setupRewardGame(database);
   const { reward } = await seedReward(database, context, 'standard', 'marked', { amounts: { sips: 3, shots: 0, chugs: 0 } });
   await enterGame(page, context);
-  await page.getByRole('button', { name: 'Kills chest, 1 available' }).click();
+  await page.getByRole('button', { name: 'Normal chest, 1 available' }).click();
   await page.getByRole('button', { name: 'Marked', exact: true }).click();
-  await page.getByRole('button', { name: 'Give 1 sips to Garen. Shield 0.' }).evaluate(button => {
+  await page.getByRole('button', { name: 'Give 1 sips to Garen. Shield 0/10.' }).evaluate(button => {
     button.click(); button.click(); button.click(); button.click();
   });
   await expect(page.getByText('Complete', { exact: true })).toBeVisible();
@@ -148,10 +148,10 @@ test('normal shields absorb new shots but never remove banked punishments', asyn
     recieved: false, player: { playerId: recipient.playerId } });
   await seedReward(database, context, 'epic', 'monster-trade');
   await enterGame(page, context);
-  await page.getByRole('button', { name: 'Grubs / Herald / Dragon chest, 1 available' }).click();
+  await page.getByRole('button', { name: 'Epic chest, 1 available' }).click();
   await page.getByRole('button', { name: 'Monster Trade', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Give 1 shots to Garen. Shield 2.' }).locator('.status-shield-badge')).toHaveText('2');
-  await page.getByRole('button', { name: 'Give 1 shots to Garen. Shield 2.' }).click();
+  await expect(page.getByRole('button', { name: 'Give 1 shots to Garen. Shield 2/10.' }).locator('.status-shield-badge')).toHaveText('2/10');
+  await page.getByRole('button', { name: 'Give 1 shots to Garen. Shield 2/10.' }).click();
   await expect(page.getByText('Complete', { exact: true })).toBeVisible();
   expect((await database.getRepository(Punishment).findOneBy({ punishmentId: old.punishmentId })).remainingAmount).toBe(7);
   expect((await context.service.status(recipient.playerId, recipient.playerToken)).punishmentTotals).toEqual({ sips: 10, shots: 0, chugs: 0 });
@@ -195,12 +195,12 @@ for (const [difficulty, expected] of [['easy', { sips: 8, shots: 0, chugs: 0 }],
     const context = await setupRewardGame(database, difficulty);
     await seedReward(database, context, 'legendary', 'final-boss');
     await enterGame(page, context);
-    await page.getByRole('button', { name: 'Baron / Elder chest, 1 available' }).click();
+    await page.getByRole('button', { name: 'Legendary chest, 1 available' }).click();
     await page.getByRole('button', { name: 'Final Boss', exact: true }).click();
     for (const unit of ['sips', 'shots', 'chugs']) {
       for (let count = 0; count < expected[unit]; count++) {
         const response = page.waitForResponse(response => response.url().endsWith('/api/distributeReward'));
-        await page.getByRole('button', { name: `Give 1 ${unit} to Garen. Shield 0.` }).click();
+        await page.getByRole('button', { name: `Give 1 ${unit} to Garen. Shield 0/10.` }).click();
         expect((await response).ok()).toBe(true);
       }
     }

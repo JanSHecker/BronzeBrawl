@@ -1,5 +1,7 @@
 // This adapter is installed only by the standalone preview entry point.
 // Every action stays in this document's memory, including unsupported requests.
+import { MAX_SHIELD } from '../constants';
+
 export function createPreviewGame() {
   const status = {
     player: { playerId: 1, playerName: 'Alex', shield: 2 },
@@ -53,7 +55,7 @@ export function createPreviewGame() {
           targets: {}, version: 0, outcome: 'success',
         };
         if (choice.mode === 'self') {
-          status.player.shield += choice.shieldPoints;
+          status.player.shield = Math.min(MAX_SHIELD, status.player.shield + choice.shieldPoints);
           chest.distributed = true;
         }
       } else if (endpoint === 'distributeReward') {

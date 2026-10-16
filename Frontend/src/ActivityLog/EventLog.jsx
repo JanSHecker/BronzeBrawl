@@ -11,7 +11,9 @@ export function activityMessage({ type, data }) {
     case "player_left": return `${playerName(data.player)} left the game.`;
     case "team_changed": return `${playerName(data.player)} joined the ${teamName(data.team)} team.`;
     case "champion_selected": return `${playerName(data.player)} selected ${championName(data.champion)}.`;
-    case "champion_rotated": return `${playerName(data.player)} rotated from ${championName(data.previousChampion)} to ${championName(data.champion)}.`;
+    case "champion_rotated": return data.automatic
+      ? `${playerName(data.player)} was automatically assigned ${championName(data.champion)} after the selection timeout.`
+      : `${playerName(data.player)} rotated from ${championName(data.previousChampion)} to ${championName(data.champion)}.`;
     case "champion_expired": return `${playerName(data.player)} must switch away from ${championName(data.champion)}.`;
     case "champion_killed": {
       const assists = data.assisters?.length ? ` Assists: ${data.assisters.map(championName).join(", ")}.` : "";

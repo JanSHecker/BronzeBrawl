@@ -2,13 +2,24 @@
 
 ## Catalogue and configuration
 
-`Backend/src/reward-catalog.json` is the declarative 1× catalogue: eight Standard,
-eight Revenge (four small/four risky), eight Turret, eight Epic, eight Legendary.
+Open `/reward` directly to browse all rewards, search by name or effect and
+preview each difficulty. This unlinked reference page uses the public read-only
+`GET /rewardCatalog?difficulty=baseline` endpoint, so it reflects server overrides
+and conversions without joining a game. The old Turret-only entries are marked
+legacy; new turret chests share the Normal pool.
+
+`Backend/src/reward-catalog.json` is the declarative 1× catalogue: eight Normal
+(stored as `standard`), eight Revenge (four small/four risky), eight Epic, and
+eight Legendary rewards, plus retained legacy Turret offers.
 Pentakill adds a separate single-entry pool with no random alternative: one chug
 per enemy, break each enemy's full shield, and grant ten shield points to the owner
 at baseline difficulty. Its quantities scale normally; allied shields are untouched.
 Support uses Standard's pool and weights. Nobody delegates actions to another
 player. There are no cleansing, reduction, transfer, or outstanding-debt rewards.
+Turrets now award Normal chests. Existing unopened Turret chests also draw from
+the Normal pool and share its inventory slot; already saved offers are preserved.
+Inventory and popup labels use chest types/rarities, while the progress tracker
+continues to name the actions and objectives that earn them.
 
 The catalogue specifies native `amounts` (`sips`, `shots`, `chugs`), targeting
 mode, minimum/maximum recipients, optional per-recipient budgets, random bonuses,
@@ -53,6 +64,19 @@ conversion snapshot, so server restarts, configuration changes, reloads, and
 polling do not reroll or rescale an opened offer. Pools filter impossible target
 counts and champion-time effects when the owner has no champion.
 
+When no opposing BronzeBrawl players have joined a team, recipient-count limits
+do not block opening. Manual, random, scatter, team, and Pentakill allocations
+can be consumed one unit at a time with **Assign to dummy**. This virtual sink
+creates no player, punishment, or shield changes. Multi-target budgets can all
+go to the dummy; personal costs and shield grants still apply normally. The API
+accepts `recipientId: "dummy"` only while there are no real opposing players,
+with the same owner-token, unit-order, version, and retry guards as real taps.
+
+Game end does not close settlement: unopened chests, saved choices, unfinished
+distributions, and punishment consumption remain usable. Champion-time changes
+and forced switching no longer apply once the game has ended. Joining teams,
+selecting champions, and new game events remain closed as before.
+
 Choosing commits immediately, discards the alternative, applies personal costs,
 shield grants and champion-time effects exactly once, and resolves any gamble.
 Random outcomes are not revealed before commitment. Repeating the same choice
@@ -66,7 +90,10 @@ Player shields are persistent whole sip-equivalent points. A five-point shield
 absorbs one shot at the default conversion, regardless of the incoming unit.
 Only new punishments can consume shields, including death and personal reward
 costs. Partial native-unit leftovers are represented as whole sips (rounded up).
-Shield grants add points; there is no punishment banking mechanic.
+Shield grants add points up to a hard maximum of **10 total shield points**,
+including stacking and difficulty scaling. Excess points are discarded; there is
+no punishment banking mechanic. The ShieldCap migration clamps existing balances
+above ten without changing outstanding punishments. Current shields display as `x/10`.
 
 Exactly one Epic (`dragons-breath`) and every Legendary have **Breaks Shields**.
 Every positive assignment with that effect sets the recipient's **entire shield

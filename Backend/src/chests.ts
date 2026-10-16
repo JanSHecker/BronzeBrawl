@@ -2,7 +2,7 @@ export const CHEST_MILESTONES = {
   kills: { type: 'standard', target: 1 },
   assists: { type: 'support', target: 2 },
   revenge: { type: 'revenge', target: 3 },
-  turret: { type: 'turret', target: 1 },
+  turret: { type: 'standard', target: 1 },
   epic: { type: 'epic', target: 1 },
   legendary: { type: 'legendary', target: 1 },
 } as const;

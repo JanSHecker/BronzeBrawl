@@ -69,6 +69,11 @@ describe('configurable native-unit reward catalogue', () => {
     expect(() => rewardConfiguration({ SIPS_PER_SHOT: '0' })).toThrow();
     expect(() => rewardConfiguration({ REWARD_CATALOG_OVERRIDES: '{"final-boss":{"breaksShields":false}}' })).toThrow();
   });
+  test.each(['easy', 'baseline', 'hard', 'terror'] as Difficulty[])('shield grants never exceed ten at %s, including overrides', difficulty => {
+    const custom = rewardConfiguration({ REWARD_CATALOG_OVERRIDES: '{"pocket-shield":{"shield":{"sips":100}}}' });
+    expect(scaledChoice(custom.pools.standard.find(row => row.id === 'pocket-shield'), difficulty, custom).shieldPoints).toBe(10);
+    expect(scaledChoice(config.pools.pentakill[0], difficulty, config).shieldPoints).toBe(Math.min(10, Math.ceil(10 * config.multipliers[difficulty])));
+  });
 
   for (const difficulty of ['easy', 'baseline', 'hard', 'terror'] as Difficulty[]) {
     for (const [pool, entries] of Object.entries(config.pools)) {
@@ -104,6 +109,23 @@ describe('configurable native-unit reward catalogue', () => {
 
 describe('durable choices, shields, forced rotation and tap security', () => {
   beforeEach(() => setup());
+  test.each([0, 9, 10])('stacked shield grants cap at ten from %s and retries do not reapply', async initial => {
+    const player = db.all(Player).find(row => row.playerId === owner.playerId);
+    player.shield = initial;
+    const { reward } = await offer('standard', 'pocket-shield');
+    const request = { id: reward.rewardId, choiceId: 'pocket-shield' };
+    await service.chooseReward(request, owner.playerToken);
+    expect((await service.status(owner.playerId, owner.playerToken)).player.shield).toBe(Math.min(10, initial + 2));
+    await new GameflowService(db as any).chooseReward(request, owner.playerToken);
+    expect((await service.status(owner.playerId, owner.playerToken)).player.shield).toBe(Math.min(10, initial + 2));
+  });
+  test('previously saved oversized offers cannot bypass the total shield cap', async () => {
+    const { reward } = await offer('standard', 'pocket-shield');
+    reward.choices[0].shieldPoints = 20;
+    await db.save(Reward, reward);
+    await service.chooseReward({ id: reward.rewardId, choiceId: 'pocket-shield' }, owner.playerToken);
+    expect((await service.status(owner.playerId, owner.playerToken)).player.shield).toBe(10);
+  });
   test('two distinct offers persist across restart; revenge always offers small versus risky', async () => {
     for (const pool of ['standard', 'support', 'revenge', 'turret', 'epic', 'legendary']) {
       const row = await db.save(Reward, { player: db.all(Player)[0], chestType: pool, amount: 2, distributed: false, choices: [] });
@@ -112,7 +134,7 @@ describe('durable choices, shields, forced rotation and tap security', () => {
       expect(first.choices[0].id).not.toBe(first.choices[1].id);
       expect(await new GameflowService(db as any).openChest({ id: row.rewardId }, owner.playerToken)).toEqual(first);
       if (pool === 'revenge') expect(first.choices.map(row => row.tier)).toEqual(['small', 'risky']);
-      if (pool === 'support') expect(first.choices.every(row => config.pools.standard.some(choice => choice.id === row.id))).toBe(true);
+      if (['support', 'turret'].includes(pool)) expect(first.choices.every(row => config.pools.standard.some(choice => choice.id === row.id))).toBe(true);
     }
   });
   test('duplicate selection and duplicate taps are idempotent, including the final tap', async () => {

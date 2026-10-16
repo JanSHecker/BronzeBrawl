@@ -1,0 +1,22 @@
+.reward-catalog { width:100%; max-width:1000px; margin:16px auto; display:flex; flex-direction:column; gap:20px; font:14px/1.5 system-ui,sans-serif; }
+.reward-catalog-header h1 { font-size:28px; font-weight:700; letter-spacing:-.5px; }
+.reward-catalog-header p, .reward-catalog-note { color:var(--bb-muted); }
+.reward-catalog-controls { display:flex; flex-wrap:wrap; gap:16px; }
+.reward-catalog-controls label { display:flex; flex-direction:column; gap:6px; font-weight:600; }
+.reward-catalog-controls label:first-child { flex:1; min-width:180px; }
+.reward-catalog-controls :is(input, select) { width:100%; font-size:14px; }
+.reward-category-heading { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; margin-bottom:4px; }
+.reward-category-heading h2 { display:flex; align-items:center; gap:8px; font-size:20px; font-weight:650; }
+.reward-category-heading svg { width:24px; height:24px; color:var(--bb-accent); }
+.reward-category-heading > span { color:var(--bb-muted); font-size:12px; }
+.reward-catalog-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr)); gap:12px; margin-top:12px; }
+.reward-catalog-grid > li { min-width:0; }
+.reward-catalog-card { height:100%; display:flex; flex-direction:column; align-items:flex-start; gap:10px; padding:18px; border:1px solid var(--bb-border); border-radius:12px; background:var(--bb-panel); overflow-wrap:anywhere; }
+.reward-catalog-card h3 { color:var(--bb-text); font-size:16px; font-weight:650; }
+.reward-effects { display:flex; flex-direction:column; gap:6px; color:var(--bb-muted); }
+.reward-tier { font-size:11px; font-weight:600; padding:2px 8px; border-radius:6px; background:var(--bb-field); }
+.reward-tier-small { color:var(--bb-teal); }
+.reward-tier-risky, .reward-breaks-shields { color:var(--bb-danger); }
+.reward-breaks-shields { display:flex; align-items:center; gap:6px; font-size:12px; margin-top:auto; }
+.reward-breaks-shields svg { width:20px; height:20px; flex-shrink:0; }
+.reward-catalog svg { fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }

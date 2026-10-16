@@ -13,6 +13,7 @@ export const PLAYER_NAME_KEY = "playerName";
 //punishment Types
 export const DEATH_PUNISHMENT = 1;
 export const DISTRIBUTED_PUNISHMENT = 0;
+export const MAX_SHIELD = 10;
 
 //Teamnames
 export const TEAMBLUE = "Team Blue";

@@ -11,7 +11,7 @@ export const { Reward } = backendRequire('../../Backend/dist/src/entities/reward
 export const { Player } = backendRequire('../../Backend/dist/src/entities/player.entity');
 export const { Punishment } = backendRequire('../../Backend/dist/src/entities/punishment.entity');
 export const catalog = rewardConfiguration({});
-export const labels = { standard: 'Kills', support: 'Assists', revenge: 'Revenge', turret: 'Turret', epic: 'Grubs / Herald / Dragon', legendary: 'Baron / Elder', pentakill: 'Pentakill' };
+export const labels = { standard: 'Normal', support: 'Support', revenge: 'Revenge', turret: 'Normal', epic: 'Epic', legendary: 'Legendary', pentakill: 'Pentakill' };
 
 // Direct fixture seeding is confined to an explicitly supplied disposable database.
 // Player actions under test still use the actual browser -> HTTP -> PostgreSQL path.

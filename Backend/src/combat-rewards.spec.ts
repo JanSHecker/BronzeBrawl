@@ -144,7 +144,7 @@ test.each(['Turret_TOrder_L0_P3_123_0', 'Turret_T100_L0_P3', 'Turret_T1_L_03_A']
   await setup();
   await ingest(feed([{ EventID: 1, EventName: 'TurretKilled', EventTime: 11, KillerName: 'Minion_T200', TurretKilled: tower }]));
   expect(owned()).toHaveLength(0);
-  expect(owned(enemies[0])[0].chestType).toBe('turret');
+  expect(owned(enemies[0])[0].chestType).toBe('standard');
 });
 
 test.each(['easy', 'baseline', 'hard', 'terror'])('Pentakill has one fixed offer, scaled at %s, breaks enemies only, and cannot replay', async difficulty => {
@@ -158,7 +158,7 @@ test.each(['easy', 'baseline', 'hard', 'terror'])('Pentakill has one fixed offer
   const request = { id: row.rewardId, choiceId: 'pentakill' };
   await Promise.all([service.chooseReward(request, owner.playerToken), service.chooseReward(request, owner.playerToken)]);
   const shield = (id: number) => db.all(Player).find(player => player.playerId === id).shield;
-  expect(shield(owner.playerId)).toBe(100 + expected.shieldPoints);
+  expect(shield(owner.playerId)).toBe(10);
   expect(shield(friend.playerId)).toBe(100);
   for (const enemy of enemies) {
     expect(shield(enemy.playerId)).toBe(0);

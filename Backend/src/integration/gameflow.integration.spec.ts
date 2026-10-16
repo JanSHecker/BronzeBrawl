@@ -117,6 +117,28 @@ const feed = (events: any[] = [], time = 20) => ({ allPlayers: roster, events: {
     });
   });
 
+  test('automatic selection persists its deadline and claims one champion across concurrent services', async () => {
+    const { game, a, champions } = await setup();
+    const original = champions.blue.find(champion => champion.championName === 'Ahri').championId;
+    await service.ingest({ gameId: game.gameId, input: feed([], 200) }, game.hostToken);
+    expect(await database.getRepository(Player).findOneBy({ playerId: a.playerId })).toMatchObject({
+      championSelectionEndsAtGameTime: 230, previousChampionId: original,
+    });
+    const restarted = new GameflowService(database);
+    await restarted.ingest({ gameId: game.gameId, input: feed([], 229) }, game.hostToken);
+    expect(await restarted.status(a.playerId, a.playerToken)).toMatchObject({ champion: null, championSelectionRemainingSeconds: 1 });
+    await Promise.all([service, restarted].map(instance => instance.ingest({ gameId: game.gameId, input: feed([], 230) }, game.hostToken)));
+    const result = await new GameflowService(database).status(a.playerId, a.playerToken);
+    expect(result.champion.championId).not.toBe(original);
+    expect(champions.blue.map(champion => champion.championId)).toContain(result.champion.championId);
+    expect(result).toMatchObject({ championSelectionRemainingSeconds: null, rotationRemainingSeconds: 180 });
+    const owned = await database.getRepository(Champion).find({ where: { player: { playerId: a.playerId } }, relations: ['player'] });
+    expect(owned).toHaveLength(1);
+    expect(owned[0].rotationEndsAtGameTime).toBe(410);
+    const history = await restarted.getActivity({ gameId: game.gameId }, { hostToken: game.hostToken });
+    expect(history.items.filter(row => row.data.automatic && row.data.player.playerId === a.playerId)).toHaveLength(1);
+  });
+
   test('time-only migration converts legacy owners and preserves already running timers', async () => {
     const { game, a, b, champions } = await setup();
     const ahri = champions.blue.find(champion => champion.championName === 'Ahri').championId;

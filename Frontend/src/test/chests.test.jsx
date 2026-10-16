@@ -17,17 +17,17 @@ beforeEach(() => {
   HTMLDialogElement.prototype.close = function () { this.removeAttribute('open'); };
 });
 
-test('six distinct chest categories display their own inventory and milestones', () => {
+test('rarity-labelled chest categories display inventory and source milestones', () => {
   render(<><ChestInventory rewards={[unopened]} enemyTeam={enemies} onRefresh={vi.fn()} /><ChestProgress /></>);
-  expect(screen.getByRole('button', { name: 'Grubs / Herald / Dragon chest, 1 available' })).toBeEnabled();
-  expect(screen.getByRole('button', { name: 'Baron / Elder chest, 0 available' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Epic chest, 1 available' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Legendary chest, 0 available' })).toBeDisabled();
   expect(screen.getAllByRole('progressbar').map(bar => bar.getAttribute('aria-valuemax'))).toEqual(['1', '2', '3', '1', '1', '1']);
 });
 
 test('reveal is server-owned, opening survives polling, and tapping assigns without confirmation', async () => {
   const refresh = vi.fn().mockResolvedValue();
   const view = render(<ChestInventory rewards={[unopened]} enemyTeam={enemies} onRefresh={refresh} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Grubs / Herald / Dragon chest, 1 available' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Epic chest, 1 available' }));
   expect(screen.getByRole('dialog')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Open', exact: true }));
   await screen.findByRole('button', { name: 'Marked' });
@@ -39,7 +39,8 @@ test('reveal is server-owned, opening survives polling, and tapping assigns with
     return { data: current };
   });
   fireEvent.click(screen.getByRole('button', { name: 'Marked' }));
-  const target = await screen.findByRole('button', { name: 'Give 1 sips to Sam. Shield 0.' });
+  const target = await screen.findByRole('button', { name: 'Give 1 sips to Sam. Shield 0/10.' });
+  expect(target.querySelector('.status-shield-badge')).toHaveTextContent('0/10');
   expect(screen.queryByRole('button', { name: 'Confirm' })).not.toBeInTheDocument();
   fireEvent.click(target);
   fireEvent.click(target);
@@ -49,7 +50,7 @@ test('reveal is server-owned, opening survives polling, and tapping assigns with
 
 test('a previously opened chest restores the same offer without another opening request', async () => {
   render(<ChestInventory rewards={[opened]} enemyTeam={enemies} onRefresh={vi.fn()} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Grubs / Herald / Dragon chest, 1 available' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Epic chest, 1 available' }));
   expect(screen.getByRole('button', { name: 'Marked' })).toBeInTheDocument();
   expect(http.post).not.toHaveBeenCalled();
 });
@@ -65,7 +66,7 @@ test('Pentakill inventory shows its one enemy-team effect and resolves without m
   fireEvent.click(screen.getByRole('button', { name: 'Open', exact: true }));
   const choice = await screen.findByRole('button', { name: 'Pentakill', exact: true });
   expect(screen.getByText('1 chugs per target to every opponent')).toBeInTheDocument();
-  expect(screen.getByText('Gain 10 shield points')).toBeInTheDocument();
+  expect(screen.getByText('Gain 10 shield points (max 10 total)')).toBeInTheDocument();
   expect(screen.getByText('Breaks every enemy shield')).toBeInTheDocument();
   fireEvent.click(choice);
   await screen.findByText('Complete');
@@ -83,10 +84,10 @@ test('a tap arriving during status refresh starts another queue drain', async ()
     return { data: current };
   });
   render(<ChestInventory rewards={[current]} enemyTeam={enemies} onRefresh={refresh} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Grubs / Herald / Dragon chest, 1 available' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Give 1 sips to Sam. Shield 0.' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Epic chest, 1 available' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Give 1 sips to Sam. Shield 0/10.' }));
   await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
-  fireEvent.click(screen.getByRole('button', { name: 'Give 1 sips to Sam. Shield 0.' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Give 1 sips to Sam. Shield 0/10.' }));
   expect(http.post).toHaveBeenCalledOnce();
   await act(async () => releaseRefresh());
   await screen.findByText('Complete');
@@ -96,10 +97,51 @@ test('a tap arriving during status refresh starts another queue drain', async ()
 test('opening failures are retryable and do not consume or hide the chest', async () => {
   http.post.mockRejectedValueOnce(new Error('offline'));
   render(<ChestInventory rewards={[unopened]} enemyTeam={enemies} onRefresh={vi.fn()} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Grubs / Herald / Dragon chest, 1 available' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Epic chest, 1 available' }));
   fireEvent.click(screen.getByRole('button', { name: 'Open', exact: true }));
   expect(await screen.findByRole('alert')).toHaveTextContent('offline');
   expect(screen.getByRole('button', { name: 'Open', exact: true })).toBeEnabled();
+});
+
+test('normal inventory combines turret chests and preserves already opened offers', () => {
+  const turret = { ...opened, chestType: 'turret' };
+  render(<ChestInventory rewards={[turret, { ...unopened, rewardId: 8, chestType: 'standard' }]} onRefresh={vi.fn()} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Normal chest, 2 available' }));
+  expect(screen.queryByRole('button', { name: /Turret chest/ })).not.toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: 'Normal' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Marked', exact: true })).toBeInTheDocument();
+  expect(http.post).not.toHaveBeenCalled();
+});
+
+test.each([false, true])('solo dummy assignment consumes multi-target rewards, including after game end: %s', async ended => {
+  const choice = { id: 'split', name: 'Split', mode: 'split', amounts: { sips: 1 }, perTarget: true, minTargets: 2, maxTargets: 2 };
+  const offer = { ...opened, choices: [choice] };
+  let current = { ...offer, recipients: [], distribution: { choiceId: 'split', remaining: { sips: 2, shots: 0, chugs: 0 }, version: 0, targets: {} } };
+  http.post.mockImplementation(async (name, request) => {
+    if (name === 'openChest') return { data: offer };
+    if (name === 'distributeReward') current = { ...current, distributed: request.expectedVersion === 1, distribution: {
+      ...current.distribution, version: request.expectedVersion + 1, remaining: { sips: 1 - request.expectedVersion },
+      targets: { dummy: { sips: request.expectedVersion + 1 } }, lastResult: { dummy: true, assigned: { sips: 1 } },
+    } };
+    return { data: current };
+  });
+  render(<ChestInventory rewards={[unopened]} recipients={[]} ended={ended} onRefresh={vi.fn()} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Epic chest, 1 available' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Open', exact: true }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Split', exact: true }));
+  const dummy = await screen.findByRole('button', { name: 'Assign to dummy' });
+  fireEvent.click(dummy);
+  fireEvent.click(dummy);
+  await screen.findByText('Complete');
+  expect(http.post).toHaveBeenLastCalledWith('distributeReward', { id: 7, expectedVersion: 1, unit: 'sips', recipientId: 'dummy' });
+});
+
+test('registered opponents suppress the dummy button even while choosing champions', () => {
+  const chest = { ...opened, distribution: { choiceId: 'marked', remaining: { sips: 2 }, targets: {}, version: 0 } };
+  render(<ChestInventory rewards={[chest]} recipients={[{ playerId: 50, playerName: 'Sam', champion: null }]} ended onRefresh={vi.fn()} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Epic chest, 1 available' }));
+  expect(screen.queryByRole('button', { name: 'Assign to dummy' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Give 1 sips to Sam. Shield 0/10.' })).toBeEnabled();
 });
 
 test('punishments total by unit and submit a single guarded decrement, not a client total', async () => {

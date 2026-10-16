@@ -43,6 +43,12 @@ test("status renders the champion timer without any mode or counter fields", asy
   expect(navigate).not.toHaveBeenCalled();
 });
 
+test.each([0, 2, 10])('status displays %s shield out of ten', async shield => {
+  axios.get.mockResolvedValue({ data: { ...status, player: { playerName: 'Alex', shield } } });
+  render(<StatusPage />);
+  expect(await screen.findByLabelText(`Shield ${shield}/10`)).toHaveTextContent(`${shield}/10`);
+});
+
 test("timer follows server updates and redirects at expiry", () => {
   const props = { navigate };
   const view = render(<ChampionRotation {...props} rotationRemainingSeconds={180} rotationAvailable={false} />);
@@ -84,4 +90,62 @@ test("an expired timer opens manual selection", async () => {
   await act(async () => {});
   expect(screen.getByRole("button", { name: "Ahri" })).toBeInTheDocument();
   expect(navigate).not.toHaveBeenCalled();
+});
+
+test.each([[30, '0:30'], [12.5, '0:13']])('selection displays the server countdown at %s game seconds', async (remaining, text) => {
+  axios.get.mockImplementation(url => Promise.resolve({ data: url === 'getAllChampions'
+    ? { blue: [champion], red: [] }
+    : { ...status, champion: null, player: { previousChampionId: 8 }, championSelectionRemainingSeconds: remaining } }));
+  render(<ChampionSelectionPage />);
+  const countdown = await screen.findByRole('timer', { name: 'Automatic champion assignment countdown' });
+  expect(countdown).toHaveTextContent(`Automatic champion assignment in ${text} (game time).`);
+  expect(navigate).not.toHaveBeenCalled();
+});
+
+test('an expired selection countdown explains waiting for a free champion', async () => {
+  axios.get.mockImplementation(url => Promise.resolve({ data: url === 'getAllChampions'
+    ? { blue: [], red: [] }
+    : { ...status, champion: null, player: { previousChampionId: 8 }, championSelectionRemainingSeconds: 0 } }));
+  render(<ChampionSelectionPage />);
+  expect(await screen.findByRole('timer')).toHaveTextContent('Automatic assignment pending. Waiting for an available champion.');
+});
+
+test('selection countdown follows polling and redirects after server assignment', async () => {
+  vi.useFakeTimers();
+  let current = { ...status, champion: null, player: { previousChampionId: 8 }, championSelectionRemainingSeconds: 30 };
+  axios.get.mockImplementation(url => Promise.resolve({ data: url === 'getAllChampions'
+    ? { blue: [champion], red: [] } : current }));
+  const view = render(<ChampionSelectionPage />);
+  try {
+    await act(async () => {});
+    expect(screen.getByRole('timer')).toHaveTextContent('0:30');
+    // Wall time alone cannot consume game seconds.
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(screen.getByRole('timer')).toHaveTextContent('0:30');
+    current = { ...current, championSelectionRemainingSeconds: 12 };
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(screen.getByRole('timer')).toHaveTextContent('0:12');
+    current = { ...current, champion, championSelectionRemainingSeconds: null, rotationAvailable: false };
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(navigate).toHaveBeenCalledWith('/status', { replace: true });
+  } finally {
+    view.unmount();
+    vi.useRealTimers();
+  }
+});
+
+test('initial selection and ended games do not show an automatic countdown', async () => {
+  axios.get.mockImplementation(url => Promise.resolve({ data: url === 'getAllChampions'
+    ? { blue: [], red: [] }
+    : { ...status, champion: null, championSelectionRemainingSeconds: null } }));
+  const view = render(<ChampionSelectionPage />);
+  await act(async () => {});
+  expect(screen.queryByRole('timer')).not.toBeInTheDocument();
+  view.unmount();
+  axios.get.mockImplementation(url => Promise.resolve({ data: url === 'getAllChampions'
+    ? { blue: [], red: [] }
+    : { ...status, champion: null, gameState: 'ended', championSelectionRemainingSeconds: 10 } }));
+  render(<ChampionSelectionPage />);
+  await act(async () => {});
+  expect(screen.queryByRole('timer')).not.toBeInTheDocument();
 });

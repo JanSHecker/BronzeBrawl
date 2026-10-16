@@ -7,9 +7,14 @@ import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom"
 import CreationPage from "./CreationPage/CreationPage";
 import CompanionPage from "./CompanionPage/CompanionPage";
 import LogPage from "./ActivityLog/LogPage";
+import RewardPage from "./RewardPage/RewardPage";
 import { LiveFeedProvider } from "./LoLApi/LiveFeed";
 
 const router = createBrowserRouter([
+  {
+    path: "/reward",
+    element: <RewardPage />,
+  },
   {
     path: "/log",
     element: <LogPage />,

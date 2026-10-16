@@ -16,7 +16,7 @@ const navigate = vi.hoisted(() => vi.fn());
 vi.mock('react-router-dom', () => ({ useNavigate: () => navigate }));
 vi.mock('axios', () => { const client = { get: vi.fn(), post: vi.fn(), interceptors: { request: { use: vi.fn() } } }; client.create = vi.fn(() => client); return { default: client }; });
 const champion = { championId: 9, championName: 'Ahri', player: null, team: { teamId: 2, teamName: 0 } };
-const status = { champion, team: { teamId: 2, teamName: 0 }, enemyTeamId: 8, rotationMode: 'Kills', gameState: 'running', feedStale: false, punishments: [], rewards: [], kda: [2,1,3], counter: [3,4], enemyTeam: [] };
+const status = { champion, team: { teamId: 2, teamName: 0 }, enemyTeamId: 8, gameState: 'live', feedStale: false, punishments: [], rewards: [], kda: [2,1,3], rotationRemainingSeconds: 180, rotationAvailable: false, enemyTeam: [] };
 const deferred = () => { let resolve, reject; const promise = new Promise((a,b) => { resolve=a; reject=b; }); return { promise, resolve, reject }; };
 beforeEach(() => { vi.clearAllMocks(); localStorage.setItem('baseURL','/api'); localStorage.setItem('GameID','5'); localStorage.setItem('playerId','42'); localStorage.setItem('playerName','Alex'); sessionStorage.setItem('bb:active', JSON.stringify({ gameId: 5, playerId: 42, playerName: 'Alex' })); sessionStorage.setItem('bb:player:5:42','player-secret'); axios.get.mockResolvedValue({ data: status }); axios.post.mockResolvedValue({ data: { ...status, playerId: 42, playerToken: 'player-secret' } }); });
 test('status retries a failed poll, uses canonical champion and cleans interval', async () => {
@@ -29,7 +29,7 @@ test('status retries a failed poll, uses canonical champion and cleans interval'
 });
 test('status loading is not rotation zero and ended match does not redirect', async () => {
   const req=deferred(); axios.get.mockReturnValueOnce(req.promise); render(<StatusPage/>); expect(navigate).not.toHaveBeenCalled();
-  await act(async () => req.resolve({data:{...status, gameState:'ended', counter:[0,0]}}));
+  await act(async () => req.resolve({data:{...status, gameState:'ended', rotationRemainingSeconds:0}}));
   expect(screen.getByRole('status')).toHaveTextContent(/game ended/i); expect(navigate).not.toHaveBeenCalled();
 });
 test('empty waiting teams render safely; duplicate name does not grant READY', async () => {

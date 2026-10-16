@@ -15,13 +15,12 @@ const StatusPage = () => {
   const fetchStatus = async signal => {
     const { data } = await api.get("Status", { params: { playerId: Number(getPlayerId()) }, signal });
     if (signal?.aborted) return;
-    if (!data || !Array.isArray(data.kda) || data.kda.length !== 3 || !Array.isArray(data.counter)
+    if (!data || !Array.isArray(data.kda) || data.kda.length !== 3
       || !Array.isArray(data.punishments) || !Array.isArray(data.rewards) || !Array.isArray(data.enemyTeam)) throw new Error("Invalid status response");
     if (!data.team) { navigate("/team", { replace: true }); return; }
     if (!data.champion) { navigate("/champion", { replace: true }); return; }
     setStatus(data);
     localStorage.setItem("teamId", data.team.teamId);
-    localStorage.setItem("rotationMode", data.rotationMode);
     localStorage.setItem("activeChampionId", data.champion.championId);
     localStorage.setItem("activeChampionName", data.champion.championName);
   };
@@ -37,7 +36,8 @@ const StatusPage = () => {
             onError={event => { event.currentTarget.onerror = null; event.currentTarget.src = placeholder; }} alt={status.champion.championName} />
           <h1>{status.kda.join("/")}</h1>
         </div>
-        <ChampionRotation changeCounter={status.counter} rotationMode={status.rotationMode} navigate={navigate} ended={status.gameState === "ended"} />
+        <ChampionRotation rotationRemainingSeconds={status.rotationRemainingSeconds} rotationAvailable={status.rotationAvailable}
+          navigate={navigate} ended={status.gameState === "ended"} />
       </div>
       <PunishmentDisplay punishmentStack={status.punishments.filter(item => !item.recieved)} onSuccess={retry} />
       <RewardDisplay rewardStack={status.rewards.filter(item => !item.distributed)} enemyTeam={status.enemyTeam} onRefresh={refresh} />

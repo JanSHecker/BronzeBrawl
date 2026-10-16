@@ -32,6 +32,20 @@ test("creation rejects HTML success without publishing an undefined invite", asy
   expect(localStorage.getItem("GameID")).toBe("7");
 });
 
+test("creation always uses three-minute rotation without mode or counter settings", async () => {
+  http.get.mockResolvedValueOnce({ data: { gameId: 8, gameCode: "KFRW", hostToken: "b".repeat(64) } })
+    .mockResolvedValue({ data: [] });
+  const setGame = vi.fn();
+  mount(<CreationForm setGame={setGame} />);
+  expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Kills/Deaths until Rotation")).not.toBeInTheDocument();
+  expect(screen.getByText(/Each champion starts with 3 minutes/)).toBeInTheDocument();
+  screen.getAllByRole("textbox").forEach(input => fireEvent.change(input, { target: { value: "3" } }));
+  fireEvent.click(screen.getByRole("button", { name: "CREATE" }));
+  await waitFor(() => expect(setGame).toHaveBeenCalledWith({ gameId: 8, gameCode: "KFRW" }));
+  expect(http.get.mock.calls[0]).toEqual(["runGame", { params: { punishmentAmount: "3", rewardAmount: "3" } }]);
+});
+
 test("invite URLs use an origin-based route, never the current query/hash", () => {
   window.history.replaceState({}, "", "/?source=test#section");
   mount(<Linkbox gameCode="KFRW" />);
@@ -53,9 +67,9 @@ test("environment punishment renders without a killer and confirmation recovers"
 
 test("status polling recovers after a transient failure and uses canonical state", async () => {
   http.get.mockRejectedValueOnce(new Error("temporary failure")).mockResolvedValue({ data: {
-    punishments: [], rewards: [], counter: [2, 2], kda: [1, 2, 3], enemyTeam: [],
+    punishments: [], rewards: [], rotationRemainingSeconds: 120, rotationAvailable: false, kda: [1, 2, 3], enemyTeam: [],
     champion: { championId: 5, championName: "Ahri" }, team: { teamId: 20, teamName: 0 },
-    rotationMode: "Deaths", gameState: "live", feedStale: false,
+    gameState: "live", feedStale: false,
   } });
   mount(<StatusPage />);
   await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());

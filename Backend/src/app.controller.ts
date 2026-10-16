@@ -71,15 +71,11 @@ export class AppController {
   async runGame(
     @Query('punishmentAmount') punishmentAmount,
     @Query('rewardAmount') rewardAmount,
-    @Query('rotationMode') rotationMode,
-    @Query('defaultCounter') defaultCounter,
   ) {
     if (this.gameflow) {
       return this.gameflow.runGame({
         punishmentAmount: this.integerQuery(punishmentAmount, 'punishmentAmount'),
         rewardAmount: this.integerQuery(rewardAmount, 'rewardAmount'),
-        rotationMode,
-        defaultCounter: this.integerQuery(defaultCounter, 'defaultCounter'),
       });
     }
     return this.gameflowUnavailable();
@@ -141,12 +137,6 @@ export class AppController {
   @Post('confirmReward')
   async confirmReward(@Body() input, @Headers('x-player-token') token: string) {
     if (this.gameflow) return this.gameflow.confirmReward(input, token);
-    return this.gameflowUnavailable();
-  }
-
-  @Get('getChangeCounters')
-  async getChangeCounter(@Query('id') playerId, @Headers('x-player-token') token: string) {
-    if (this.gameflow) return this.gameflow.getChangeCounters(this.integerQuery(playerId, 'playerId'), token);
     return this.gameflowUnavailable();
   }
 

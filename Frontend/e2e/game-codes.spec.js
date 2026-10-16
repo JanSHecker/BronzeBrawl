@@ -4,8 +4,8 @@ import { test, expect } from "@playwright/test";
 // No players are created on a public server; backend behavior has separate HTTP tests.
 async function fixture(context) {
   const games = {
-    KFRW: { gameId: 7, gameCode: "KFRW", punishmentAmount: 3, rewardAmount: 5, rotationMode: "Kills", defaultRotationCounter: 2 },
-    ABCD: { gameId: 8, gameCode: "ABCD", punishmentAmount: 7, rewardAmount: 9, rotationMode: "Kills", defaultRotationCounter: 2 },
+    KFRW: { gameId: 7, gameCode: "KFRW", punishmentAmount: 3, rewardAmount: 5, rotationDurationSeconds: 180 },
+    ABCD: { gameId: 8, gameCode: "ABCD", punishmentAmount: 7, rewardAmount: 9, rotationDurationSeconds: 180 },
   };
   const joins = [], lookups = [];
   await context.route("https://ddragon.leagueoflegends.com/**", route => route.fulfill({ json: [] }));

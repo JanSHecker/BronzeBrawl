@@ -27,7 +27,7 @@ class MemoryDB {
     return value;
   }
 }
-const settings = { punishmentAmount: 7, rewardAmount: 9, defaultCounter: 2, rotationMode: 'Kills' };
+const settings = { punishmentAmount: 7, rewardAmount: 9 };
 let database: MemoryDB;
 let service: GameflowService;
 beforeEach(() => { database = new MemoryDB(); service = new GameflowService(database as any); });
@@ -97,6 +97,15 @@ test('HTTP requires codes, keeps host recovery authenticated and rate-limits loo
   try {
     const game = await service.runGame(settings);
     const http = app.getHttpServer();
+    await request(http).get('/runGame').query({ punishmentAmount: 7, rewardAmount: 9 })
+      .expect(200).expect(response => {
+        expect(response.body).toMatchObject({ rotationDurationSeconds: 180 });
+        expect(response.body).not.toHaveProperty('rotationMode');
+        expect(response.body).not.toHaveProperty('defaultRotationCounter');
+      });
+    await request(http).get('/runGame').query({ punishmentAmount: 7, rewardAmount: 9, rotationMode: 'Kills', defaultCounter: 1 })
+      .expect(200).expect(response => expect(response.body.rotationDurationSeconds).toBe(180));
+    await request(http).get('/getChangeCounters').query({ id: 1 }).expect(404);
     await request(http).get('/getSettings').query({ gameId: game.gameId }).expect(400);
     await request(http).post('/createPlayer').send({ playerName: 'Alice', game: game.gameId }).expect(400);
     await request(http).get('/getInvitation').query({ gameId: game.gameId }).expect(403);

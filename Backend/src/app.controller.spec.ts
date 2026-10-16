@@ -56,7 +56,6 @@ const createMock = () => ({
   getKDA: jest.fn(),
   confirmPunishment: jest.fn(),
   confirmReward: jest.fn(),
-  getChangeCounters: jest.fn(),
   getPunishments: jest.fn(),
   getRewards: jest.fn(),
   getTeamChampions: jest.fn(),

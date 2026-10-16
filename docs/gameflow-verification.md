@@ -11,9 +11,9 @@ and adds PostgreSQL and browser regression coverage.
 | --- | --- |
 | #4 | Environment deaths record the victim without requiring a champion killer or inventing a reward. Unknown/ambiguous participants fail atomically. Punishment rendering is null-safe. |
 | #5 | Host-scoped snapshots, roster/source validation and lifecycle/progress persist in PostgreSQL; no shared-file worker is used by the secured endpoints. A new service reads the same state. Host monitor sends the game ID and host capability. |
-| #6 | Events and consequences commit together under a PostgreSQL game advisory lock. Replays use durable `(game, EventID)` identity, including EventID 0, and property-order-independent JSONB comparison. Injected transaction failure rolls back counters and records before retry. |
+| #6 | Events and consequences commit together under a PostgreSQL game advisory lock. Replays use durable `(game, EventID)` identity, including EventID 0, and property-order-independent JSONB comparison. Injected transaction failure rolls back records before retry without changing champion timers. |
 | #7 | Reward ownership, enemy/same-game validation and server-derived amounts are enforced in one locked transaction. Parallel submissions produce one penalty. Legacy public punishment creation is disabled. |
-| #8 | Counter updates and champion selection share the game lock; selection is awaited; occupied/same-champion selections conflict. The frontend does not submit counters and restores state from authenticated Status. |
+| #8 | Three-minute champion timers and champion selection share the game lock; selection is awaited; occupied/same-champion selections conflict. The frontend does not submit timing and restores state from authenticated Status. See [champion-rotation.md](champion-rotation.md). |
 | #9 | Requests have timeouts. Polling schedules after completion, recovers from failures, and cancels on cleanup. Mutations release loading state in finally and display retryable failures. |
 | #10 | Frontend membership uses playerId, colors use teamName and selections use explicit teamId, never names/parity/adjacency. |
 | #12 | Configured amounts 7/9 and a complete K/D/A tuple, including persisted assists, are checked against real PostgreSQL. |

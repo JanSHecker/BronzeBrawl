@@ -7,9 +7,11 @@ import { Reward } from '../entities/reward.entity';
 import { Event } from '../entities/event.entity';
 import { Takedown } from '../entities/takedown.entity';
 import { Game } from '../entities/game.entity';
+import { Champion } from '../entities/champion.entity';
+import { TimeOnlyRotation1792400000000 } from '../../migrations/1792400000000-TimeOnlyRotation';
 
 const enabled = Boolean(process.env.TEST_DATABASE_URL);
-const settings = { punishmentAmount: 7, rewardAmount: 9, defaultCounter: 2, rotationMode: 'Kills' };
+const settings = { punishmentAmount: 7, rewardAmount: 9 };
 const roster = [
   { championName: 'Ahri', riotIdGameName: 'AuditAlice', riotIdTagLine: 'TEST', team: 'ORDER' },
   { championName: 'Lux', riotIdGameName: 'AuditAssist', riotIdTagLine: 'TEST', team: 'ORDER' },
@@ -17,7 +19,7 @@ const roster = [
   { championName: 'Jinx', riotIdGameName: 'AuditSpare', riotIdTagLine: 'TEST', team: 'ORDER' },
 ];
 const kill = (id: number, killer = 'AuditAlice#TEST') => ({ EventID: id, EventTime: id, EventName: 'ChampionKill', KillerName: killer, VictimName: 'AuditBob#TEST', Assisters: ['AuditAssist#TEST'] });
-const feed = (events: any[] = []) => ({ allPlayers: roster, events: { Events: events }, gameData: { gameTime: 20, mapNumber: 11 } });
+const feed = (events: any[] = [], time = 20) => ({ allPlayers: roster, events: { Events: events }, gameData: { gameTime: time, mapNumber: 11 } });
 
 (enabled ? describe : describe.skip)('PostgreSQL gameflow transactions (synthetic test fixtures)', () => {
   let database: DataSource;
@@ -71,12 +73,49 @@ const feed = (events: any[] = []) => ({ allPlayers: roster, events: { Events: ev
     await service.ingest({ gameId: game.gameId, input }, game.hostToken);
     const restarted = new GameflowService(database);
     await restarted.ingest({ gameId: game.gameId, input }, game.hostToken);
-    expect((await restarted.status(a.playerId, a.playerToken))).toMatchObject({ kda: [1, 0, 0], counter: [1, 2], rewards: [{ amount: 9 }] });
+    expect((await restarted.status(a.playerId, a.playerToken))).toMatchObject({ kda: [1, 0, 0], rotationRemainingSeconds: 180, rewards: [{ amount: 9 }] });
     expect((await restarted.status(b.playerId, b.playerToken))).toMatchObject({ kda: [0, 1, 0], punishments: [{ amount: 7 }] });
     expect(await restarted.kda(champions.blue.find(champion => champion.championName === 'Lux').championId)).toEqual([0, 0, 1]);
     const event = await database.getRepository(Event).findOne({ where: { game: { gameId: game.gameId } }, relations: ['takedown', 'takedown.reward', 'takedown.punishment'] });
     expect(event.takedown.reward.amount).toBe(9);
     expect(event.takedown.punishment.amount).toBe(7);
+  });
+
+  test('champion timers persist in PostgreSQL, honor adjusted deadlines and reset on takeover', async () => {
+    const { game, a, b, champions } = await setup();
+    const ahri = champions.blue.find(champion => champion.championName === 'Ahri').championId;
+    const lux = champions.blue.find(champion => champion.championName === 'Lux').championId;
+    const restarted = new GameflowService(database);
+    expect(await restarted.status(a.playerId, a.playerToken)).toMatchObject({
+      rotationRemainingSeconds: 180, rotationAvailable: false, champion: { rotationEndsAtGameTime: 200 },
+    });
+    await database.getRepository(Champion).update(ahri, { rotationEndsAtGameTime: 220.5 });
+    expect(await restarted.status(a.playerId, a.playerToken)).toMatchObject({ rotationRemainingSeconds: 200.5 });
+    expect(await restarted.status(b.playerId, b.playerToken)).toMatchObject({ rotationRemainingSeconds: 180 });
+    await restarted.ingest({ gameId: game.gameId, input: { ...feed(), gameData: { gameTime: 220.5, mapNumber: 11 } } }, game.hostToken);
+    expect(await restarted.status(a.playerId, a.playerToken)).toMatchObject({ rotationRemainingSeconds: 0, rotationAvailable: true });
+    await restarted.chooseChampion({ player: a.playerId, champion: lux }, a.playerToken);
+    expect(await database.getRepository(Champion).findOneBy({ championId: ahri })).toMatchObject({ rotationEndsAtGameTime: null });
+    expect(await new GameflowService(database).status(a.playerId, a.playerToken)).toMatchObject({
+      rotationRemainingSeconds: 180, rotationAvailable: false, champion: { rotationEndsAtGameTime: 400.5 },
+    });
+  });
+
+  test('time-only migration converts legacy owners and preserves already running timers', async () => {
+    const { game, a, b, champions } = await setup();
+    const ahri = champions.blue.find(champion => champion.championName === 'Ahri').championId;
+    await database.getRepository(Champion).update(ahri, { rotationEndsAtGameTime: null });
+    await database.query(`UPDATE "game" SET "rotationMode" = 'Kills' WHERE "gameId" = $1`, [game.gameId]);
+    const runner = database.createQueryRunner();
+    try {
+      await new TimeOnlyRotation1792400000000().up(runner);
+    } finally {
+      await runner.release();
+    }
+    const restarted = new GameflowService(database);
+    expect(await restarted.status(a.playerId, a.playerToken)).toMatchObject({ rotationRemainingSeconds: 180, champion: { rotationEndsAtGameTime: 200 } });
+    expect(await restarted.status(b.playerId, b.playerToken)).toMatchObject({ rotationRemainingSeconds: 180, champion: { rotationEndsAtGameTime: 200 } });
+    expect(await restarted.getSettings(game.gameId)).not.toHaveProperty('rotationMode');
   });
 
   test('companion connection persists across services, expires and revokes atomically', async () => {
@@ -101,7 +140,7 @@ const feed = (events: any[] = []) => ({ allPlayers: roster, events: { Events: ev
     const other = new GameflowService(database);
     await Promise.all([service.ingest({ gameId: game.gameId, input: feed([kill(1)]) }, game.hostToken), other.ingest({ gameId: game.gameId, input: feed([kill(1), kill(2)]) }, game.hostToken)]);
     const status = await service.status(a.playerId, a.playerToken);
-    expect(status.counter).toEqual([0, 2]);
+    expect(status.rotationRemainingSeconds).toBe(180);
     expect(status.rewards).toHaveLength(2);
     const request = { id: status.rewards[0].rewardId, punishment: { recipient: { playerId: b.playerId }, amount: -99 } };
     const results = await Promise.allSettled([service.confirmReward(request, a.playerToken), other.confirmReward(request, a.playerToken)]);
@@ -112,7 +151,7 @@ const feed = (events: any[] = []) => ({ allPlayers: roster, events: { Events: ev
     expect(penalties[0].amount).toBe(9);
   });
 
-  test('an actual transaction rolls back events, counters and consequences before retry', async () => {
+  test('an actual transaction rolls back events and consequences without changing timers before retry', async () => {
     const { game, a } = await setup();
     const failing = new GameflowService({ options: database.options, manager: {
       transaction: (work: any) => database.transaction(manager => work({
@@ -122,7 +161,7 @@ const feed = (events: any[] = []) => ({ allPlayers: roster, events: { Events: ev
     } } as any);
     await expect(failing.ingest({ gameId: game.gameId, input: feed([kill(1)]) }, game.hostToken)).rejects.toThrow('injected reward failure');
     expect(await database.getRepository(Event).countBy({ game: { gameId: game.gameId } })).toBe(0);
-    expect((await service.status(a.playerId, a.playerToken)).counter).toEqual([2, 2]);
+    expect((await service.status(a.playerId, a.playerToken)).rotationRemainingSeconds).toBe(180);
     await service.ingest({ gameId: game.gameId, input: feed([kill(1)]) }, game.hostToken);
     expect((await service.status(a.playerId, a.playerToken)).rewards).toHaveLength(1);
   });
@@ -132,13 +171,13 @@ const feed = (events: any[] = []) => ({ allPlayers: roster, events: { Events: ev
     const lobby = await service.createPlayer({ playerName: 'audit-unselected', gameCode: game.gameCode });
     await service.ingest({ gameId: game.gameId, input: feed([kill(1, 'Turret_T200_L0_P3')]) }, game.hostToken);
     expect((await service.status(lobby.playerId, lobby.playerToken)).rewards).toHaveLength(0);
-    expect((await service.status(b.playerId, b.playerToken))).toMatchObject({ kda: [0, 1, 0], counter: [2, 1], punishments: [{ amount: 7 }] });
+    expect((await service.status(b.playerId, b.playerToken))).toMatchObject({ kda: [0, 1, 0], rotationRemainingSeconds: 180, punishments: [{ amount: 7 }] });
     await service.deletePlayer({ id: lobby.playerId }, lobby.playerToken);
   });
 
   test('rotation stays owned and atomic against concurrent champion selection', async () => {
     const { game, a, champions, teams } = await setup();
-    await service.ingest({ gameId: game.gameId, input: feed([kill(1), kill(2)]) }, game.hostToken);
+    await service.ingest({ gameId: game.gameId, input: feed([kill(1), kill(2)], 200) }, game.hostToken);
     const c = await service.createPlayer({ playerName: 'audit-competing', gameCode: game.gameCode });
     await service.joinTeam({ player: c.playerId, team: teams[0].teamId }, c.playerToken);
     const target = champions.blue.find(champion => champion.championName === 'Lux').championId;

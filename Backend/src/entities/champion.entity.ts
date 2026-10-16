@@ -33,6 +33,10 @@ export class Champion {
   @Column({ nullable: true })
   riotIdTagLine: string;
 
+  // Per ownership period; future effects may move this deadline in either direction.
+  @Column({ type: 'double precision', nullable: true })
+  rotationEndsAtGameTime: number | null;
+
   @OneToMany(() => Takedown, (takedown) => takedown.killer)
   kills: Takedown[];
 

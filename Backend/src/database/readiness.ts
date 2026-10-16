@@ -14,13 +14,13 @@ export const REQUIRED_APPLICATION_TABLES = [
 
 export const REQUIRED_APPLICATION_COLUMNS: Record<string, readonly string[]> = {
   game: [
-    'gameId', 'punishmentAmount', 'rewardAmount', 'rotationMode', 'defaultRotationCounter',
+    'gameId', 'punishmentAmount', 'rewardAmount',
     'state', 'hostTokenHash', 'lastGameTime', 'lastFeedAt', 'rosterFingerprint', 'feedSnapshot',
     'companionTokenHash', 'lastCompanionAt', 'companionAvailability', 'gameCode',
   ],
   team: ['teamId', 'teamName', 'gameGameId'],
-  champion: ['championId', 'championName', 'summonerName', 'teamTeamId', 'riotId', 'riotIdGameName', 'riotIdTagLine'],
-  player: ['playerId', 'playerName', 'killCounter', 'deathCounter', 'teamTeamId', 'gameGameId', 'championChampionId', 'playerTokenHash'],
+  champion: ['championId', 'championName', 'summonerName', 'teamTeamId', 'riotId', 'riotIdGameName', 'riotIdTagLine', 'rotationEndsAtGameTime'],
+  player: ['playerId', 'playerName', 'teamTeamId', 'gameGameId', 'championChampionId', 'playerTokenHash'],
   punishment: ['punishmentId', 'amount', 'punishmentType', 'recieved', 'playerPlayerId', 'distributorPlayerId'],
   reward: ['rewardId', 'amount', 'rewardType', 'distributed', 'playerPlayerId'],
   takedown: ['takedownId', 'multiKill', 'shutdown', 'killerChampionId', 'killedChampionId', 'punishmentPunishmentId', 'rewardRewardId'],
@@ -59,6 +59,8 @@ export const REQUIRED_MIGRATIONS = [
   { name: 'GameflowEventIdentity1710000002000', timestamp: 1710000002000 },
   { name: 'CompanionConnection1792100000000', timestamp: 1792100000000 },
   { name: 'GameCodes1792200000000', timestamp: 1792200000000 },
+  { name: 'ChampionRotationTimer1792300000000', timestamp: 1792300000000 },
+  { name: 'TimeOnlyRotation1792400000000', timestamp: 1792400000000 },
 ] as const;
 
 export type DatabaseReadiness =

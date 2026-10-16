@@ -130,4 +130,14 @@ describe('database readiness', () => {
       expect(await checkDatabaseReadiness({ isInitialized: true, query })).toEqual({ ready: false, missingTables: ['game'] });
     }
   });
+
+  test('requires the persisted champion timer column', async () => {
+    const query = completeSchemaQuery().mockImplementation((sql: string) => {
+      const rows = completeSchemaQuery()(sql);
+      return sql.includes('information_schema.columns')
+        ? rows.filter((row: any) => row.table_name !== 'champion' || row.column_name !== 'rotationEndsAtGameTime')
+        : rows;
+    });
+    expect(await checkDatabaseReadiness({ isInitialized: true, query })).toEqual({ ready: false, missingTables: ['champion'] });
+  });
 });

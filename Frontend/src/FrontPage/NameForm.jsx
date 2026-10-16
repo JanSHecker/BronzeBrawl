@@ -27,7 +27,7 @@ const NameForm = ({ gameCode }) => {
       localStorage.setItem("playerId", player.playerId);
       localStorage.setItem(PLAYER_NAME_KEY, playerName);
       ["teamId", "enemyTeamId", "activeChampionId", "activeChampionName", "changeAllowed"].forEach(key => localStorage.removeItem(key));
-      for (const key of ["punishmentAmount", "rewardAmount", "rotationMode", "defaultRotationCounter"]) {
+      for (const key of ["punishmentAmount", "rewardAmount"]) {
         const value = settings[key] ?? settings.settings?.[key];
         if (value !== undefined) localStorage.setItem(key, value);
       }

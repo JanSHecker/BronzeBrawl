@@ -17,12 +17,6 @@ export class Game {
   @Column()
   rewardAmount: number;
 
-  @Column()
-  rotationMode: string;
-
-  @Column({ nullable: true })
-  defaultRotationCounter: number;
-
   @Column({ default: 'waiting_for_feed' })
   state: string;
 

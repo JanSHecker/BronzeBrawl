@@ -10,6 +10,7 @@ import { Event } from './entities/event.entity';
 import { Takedown } from './entities/takedown.entity';
 import { Reward } from './entities/reward.entity';
 import { Punishment } from './entities/punishment.entity';
+import { rotationRemainingSeconds, TIME_ROTATION_DURATION_SECONDS } from './rotation';
 
 export class GameflowError extends HttpException {
   constructor(message: string, status: HttpStatus | number) {
@@ -180,14 +181,12 @@ export class GameflowService {
       gameCode: game.gameCode,
       punishmentAmount: game.punishmentAmount,
       rewardAmount: game.rewardAmount,
-      rotationMode: game.rotationMode,
-      defaultRotationCounter: game.defaultRotationCounter,
+      rotationDurationSeconds: TIME_ROTATION_DURATION_SECONDS,
       state: game.state || 'waiting_for_feed',
       settings: {
         punishmentAmount: game.punishmentAmount,
         rewardAmount: game.rewardAmount,
-        defaultCounter: game.defaultRotationCounter,
-        rotationMode: game.rotationMode,
+        rotationDurationSeconds: TIME_ROTATION_DURATION_SECONDS,
       },
     };
     if (hostToken) result.hostToken = hostToken;
@@ -214,6 +213,7 @@ export class GameflowService {
       championId: champion.championId,
       championName: champion.championName,
       summonerName: champion.summonerName,
+      rotationEndsAtGameTime: champion.rotationEndsAtGameTime ?? null,
       team: champion.team ? this.publicTeam(champion.team) : null,
       player: champion.player ? this.publicPlayer(champion.player) : null,
     };
@@ -343,12 +343,6 @@ export class GameflowService {
   async runGame(input: GameInput): Promise<any> {
     const punishmentAmount = this.numberSetting(input?.punishmentAmount, 'punishmentAmount');
     const rewardAmount = this.numberSetting(input?.rewardAmount, 'rewardAmount');
-    const defaultRotationCounter = this.numberSetting(
-      input?.defaultRotationCounter ?? input?.defaultCounter,
-      'defaultCounter',
-    );
-    const rotationMode = input?.rotationMode;
-    if (rotationMode !== 'Kills' && rotationMode !== 'Deaths') this.fail('invalid rotationMode');
     return this.transaction(async (store) => {
       let gameCode: string;
       for (let attempt = 0; attempt < 100; attempt++) {
@@ -361,8 +355,6 @@ export class GameflowService {
         gameCode,
         punishmentAmount,
         rewardAmount,
-        rotationMode,
-        defaultRotationCounter,
         state: 'waiting_for_feed',
         hostTokenHash: this.hash(hostToken),
         lastGameTime: null,
@@ -533,6 +525,16 @@ export class GameflowService {
           champions.push(champion);
         }
       }
+      // Legacy owners without a game clock at migration time start their first
+      // timer when a real clock arrives. Existing (including adjusted) deadlines stay intact.
+      if (gameTime !== undefined && game.state !== 'ended') {
+        for (const champion of champions) {
+          if (champion.player && champion.rotationEndsAtGameTime == null) {
+            champion.rotationEndsAtGameTime = gameTime + TIME_ROTATION_DURATION_SECONDS;
+            await this.save(Champion, champion, store);
+          }
+        }
+      }
       const players = (await this.rows(Player, store, ['game', 'team', 'champion'])).filter((player) => this.gameId(player.game) === gameId);
       const existingEvents = (await this.rows(Event, store, ['game'])).filter((event) => this.gameId(event.game) === gameId);
       if (game.state === 'ended' && (gameTime !== undefined && game.lastGameTime !== null && gameTime > game.lastGameTime)) {
@@ -576,16 +578,12 @@ export class GameflowService {
         const victimPlayer = await this.playerForChampion(victim, players);
         const killerPlayer = await this.playerForChampion(killer, players);
         if (victimPlayer) {
-          victimPlayer.deathCounter = Math.max(0, Number(victimPlayer.deathCounter || 0) - 1);
-          await this.save(Player, victimPlayer, store);
           const punishment = await this.save(Punishment, {
             amount: game.punishmentAmount, punishmentType: 1, player: victimPlayer, takedown,
           }, store);
           takedown.punishment = punishment;
         }
         if (killerPlayer) {
-          killerPlayer.killCounter = Math.max(0, Number(killerPlayer.killCounter || 0) - 1);
-          await this.save(Player, killerPlayer, store);
           const reward = await this.save(Reward, {
             amount: game.rewardAmount, rewardType: 1, distributed: false, player: killerPlayer, takedown,
           }, store);
@@ -625,7 +623,7 @@ export class GameflowService {
       const rawToken = this.token();
       const player = await this.save(Player, {
         playerName: input.playerName.trim(), game, team: null, champion: null,
-        killCounter: 0, deathCounter: 0, playerTokenHash: this.hash(rawToken),
+        playerTokenHash: this.hash(rawToken),
       }, store);
       return {
         playerId: player.playerId,
@@ -687,14 +685,14 @@ export class GameflowService {
     return result;
   }
 
-  async chooseChampion(input: { player: any; champion: any; counter?: any; killCounter?: any }, token: string): Promise<any> {
+  async chooseChampion(input: { player: any; champion: any }, token: string): Promise<any> {
     const player = await this.getPlayerOrFail(input?.player);
     const gameId = this.gameId(player.game);
     if (!gameId) this.fail('invalid gameId');
     return this.transaction(async (store) => {
       const player = await this.authorizePlayer(input?.player, token, store);
       // Reload the game inside the locked transaction. The client-provided
-      // counter/mode and a relation loaded before the lock are never trusted.
+      // timing and a relation loaded before the lock are never trusted.
       const game = await this.getGameOrFail(player.game, store);
       if (game.gameId !== gameId) this.fail('player belongs to another game', HttpStatus.CONFLICT);
       if (game.state === 'ended') this.fail('game has ended', HttpStatus.CONFLICT);
@@ -704,7 +702,10 @@ export class GameflowService {
       if (!champion) this.fail('champion not found', HttpStatus.NOT_FOUND);
       if (this.gameId(champion.team?.game) !== game.gameId) this.fail('champion belongs to another game', HttpStatus.FORBIDDEN);
       if (this.teamId(champion.team) !== this.teamId(player.team)) this.fail('champion is on the other team', HttpStatus.FORBIDDEN);
-      if (player.champion && this.championId(player.champion) === championId) this.fail('same champion selection resets no counters', HttpStatus.CONFLICT);
+      if (player.champion && this.championId(player.champion) === championId) this.fail('same champion selection does not reset the timer', HttpStatus.CONFLICT);
+      if (typeof game.lastGameTime !== 'number' || !Number.isFinite(game.lastGameTime)) {
+        this.fail('waiting for game time before starting rotation timer', HttpStatus.CONFLICT);
+      }
 
       // Both the candidate and the player's current champion were loaded in
       // this transaction after the game lock. Never clear an ownership link
@@ -721,18 +722,16 @@ export class GameflowService {
         if (currentChampion.player && this.playerId(currentChampion.player) !== player.playerId) {
           this.fail('current champion is occupied', HttpStatus.CONFLICT);
         }
-        const available = game.rotationMode === 'Kills'
-          ? Number(player.killCounter) <= 0
-          : Number(player.deathCounter) <= 0;
-        if (!available) this.fail('rotation counter is not exhausted', HttpStatus.CONFLICT);
+        if (rotationRemainingSeconds(currentChampion, game.lastGameTime) !== 0) {
+          this.fail('rotation timer is not exhausted', HttpStatus.CONFLICT);
+        }
         currentChampion.player = null;
+        currentChampion.rotationEndsAtGameTime = null;
         await this.save(Champion, currentChampion, store);
       }
       champion.player = player;
+      champion.rotationEndsAtGameTime = game.lastGameTime + TIME_ROTATION_DURATION_SECONDS;
       player.champion = champion;
-      const counter = Number(game.defaultRotationCounter);
-      player.killCounter = counter;
-      player.deathCounter = counter;
       await this.save(Champion, champion, store);
       await this.save(Player, player, store);
       return this.publicChampion(champion);
@@ -780,7 +779,6 @@ export class GameflowService {
     return {
       punishments: punishments.map((punishment) => this.publicPunishment(punishment)),
       rewards: rewards.map((reward) => this.publicReward(reward)),
-      counter: [Number(player.killCounter || 0), Number(player.deathCounter || 0)],
       kda: champion ? await this.kda(champion.championId) : [0, 0, 0],
       enemyTeam: enemy ? (await this.rows(Champion, this.database, ['team', 'team.game', 'player'])).filter((row) => this.teamId(row.team) === enemy.teamId).map((row) => this.publicChampion(row)) : [],
       gameState: game.state || 'waiting_for_feed',
@@ -788,13 +786,9 @@ export class GameflowService {
       champion: champion ? this.publicChampion(champion) : null,
       team: team ? this.publicTeam(team) : null,
       enemyTeamId: enemy?.teamId || null,
-      rotationMode: game.rotationMode,
+      rotationRemainingSeconds: rotationRemainingSeconds(champion, game.lastGameTime),
+      rotationAvailable: game.state !== 'ended' && (!champion || rotationRemainingSeconds(champion, game.lastGameTime) === 0),
     };
-  }
-
-  async getChangeCounters(playerValue: any, token: string): Promise<[number, number]> {
-    const player = await this.authorizePlayer(playerValue, token);
-    return [Number(player.killCounter || 0), Number(player.deathCounter || 0)];
   }
 
   async confirmReward(request: any, token: string): Promise<any> {
@@ -872,6 +866,7 @@ export class GameflowService {
       }
       if (player.champion) {
         player.champion.player = null;
+        player.champion.rotationEndsAtGameTime = null;
         await this.save(Champion, player.champion, store);
       }
       await this.remove(Player, player, store);

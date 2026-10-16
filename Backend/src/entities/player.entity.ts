@@ -21,12 +21,6 @@ export class Player {
   @Column()
   playerName: string;
 
-  @Column({ default: 0 })
-  killCounter: number;
-
-  @Column({ default: 0 })
-  deathCounter: number;
-
   @Column({ nullable: true })
   playerTokenHash: string;
 

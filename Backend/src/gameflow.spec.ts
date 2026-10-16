@@ -13,11 +13,12 @@ import { Event } from './entities/event.entity';
 import { Takedown } from './entities/takedown.entity';
 import { Reward } from './entities/reward.entity';
 import { Punishment } from './entities/punishment.entity';
+import { ActivityLog } from './entities/activity-log.entity';
 
 // A missing implementation is a behavioral failure, not a TypeScript import failure.
 let Service: any;
 try { Service = require('./gameflow.service').GameflowService; } catch { Service = class {}; }
-const keys = new Map<any, string>([[Game,'gameId'],[Player,'playerId'],[Team,'teamId'],[Champion,'championId'],[Event,'eventId'],[Takedown,'takedownId'],[Reward,'rewardId'],[Punishment,'punishmentId']]);
+const keys = new Map<any, string>([[Game,'gameId'],[Player,'playerId'],[Team,'teamId'],[Champion,'championId'],[Event,'eventId'],[Takedown,'takedownId'],[Reward,'rewardId'],[Punishment,'punishmentId'],[ActivityLog,'activityId']]);
 function matches(row: any, where: any): boolean {
   if (Array.isArray(where)) return where.some(w => matches(row,w));
   return Object.entries(where || {}).every(([k,v]) => v && typeof v === 'object' ? matches(row[k] || {},v) : row[k] === v);
@@ -73,6 +74,92 @@ async function setup() {
 }
 beforeEach(()=>{db=new MemoryDB(); service=new Service(db as any);});
 describe('gameflow contract',()=>{
+  test('activity history captures gameplay, consequences, confirmations and end exactly once', async () => {
+    await setup();
+    const input = feed([kill()], 12);
+    await service.ingest({ gameId: game.gameId, input }, game.hostToken);
+    const reward = (await service.status(a.playerId, a.playerToken)).rewards[0];
+    const assigned = await service.confirmReward({ id: reward.rewardId, punishment: { recipient: { playerId: b.playerId } } }, a.playerToken);
+    await service.confirmPunishment({ id: assigned.punishmentId }, b.playerToken);
+    await service.confirmPunishment({ id: assigned.punishmentId }, b.playerToken);
+    service = new Service(db as any);
+    await service.ingest({ gameId: game.gameId, input }, game.hostToken);
+    await service.ingest({ gameId: game.gameId, input: feed([kill(), { EventID: 2, EventName: 'GameEnd', EventTime: 13 }], 13) }, game.hostToken);
+    const history = await service.getActivity({ gameId: game.gameId, limit: 100 }, { hostToken: game.hostToken });
+    const types = history.items.map(item => item.type);
+    for (const type of ['game_created', 'game_started', 'champion_killed', 'reward_earned', 'reward_distributed', 'punishment_confirmed', 'game_ended']) {
+      expect(types.filter(value => value === type)).toHaveLength(1);
+    }
+    expect(types.filter(value => value === 'punishment_assigned')).toHaveLength(2);
+    expect(history.items.find(item => item.type === 'champion_killed')).toMatchObject({
+      gameTime: 1, data: { killer: { championName: 'Ahri' }, victim: { championName: 'Garen' }, assisters: [{ championName: 'Lux' }] },
+    });
+    expect(JSON.stringify(history)).not.toMatch(/Token|Hash|feedSnapshot/);
+  });
+
+  test('activity has scoped authorization and stable bidirectional cursor pagination after restart', async () => {
+    await setup();
+    const other = await service.runGame(settings);
+    await expect(service.getActivity({ gameId: game.gameId }, {})).rejects.toMatchObject({ status: 403 });
+    await expect(service.getActivity({ gameId: other.gameId, playerId: a.playerId }, { playerToken: a.playerToken })).rejects.toMatchObject({ status: 403 });
+    await expect(service.getActivity({ gameId: game.gameId }, { hostToken: other.hostToken })).rejects.toMatchObject({ status: 403 });
+    const auth = { playerToken: a.playerToken };
+    const query = { gameId: game.gameId, playerId: a.playerId, limit: 2 };
+    const first = await service.getActivity(query, auth);
+    const older = await service.getActivity({ ...query, before: first.nextCursor }, auth);
+    expect(first.items[1].activityId).toBeGreaterThan(older.items[0].activityId);
+    const newest = first.items[0].activityId;
+    await service.ingest({ gameId: game.gameId, input: feed([kill()], 12) }, game.hostToken);
+    service = new Service(db as any);
+    const newer = await service.getActivity({ ...query, after: newest }, auth);
+    expect(newer.items[0].activityId).toBeGreaterThan(newest);
+    expect(newer.nextCursor).not.toBeNull();
+    for (const invalid of [{ limit: 101 }, { before: -1 }, { after: 0 }, { before: 1, after: 2 }]) {
+      await expect(service.getActivity({ ...query, ...invalid }, auth)).rejects.toMatchObject({ status: 400 });
+    }
+  });
+
+  test('activity writes roll back with game changes, and activity failure rolls back the action', async () => {
+    await setup();
+    const count = db.all(ActivityLog).length;
+    db.failOn = Reward;
+    await expect(service.ingest({ gameId: game.gameId, input: feed([kill()]) }, game.hostToken)).rejects.toThrow('injected');
+    expect(db.all(ActivityLog)).toHaveLength(count);
+    db.failOn = ActivityLog;
+    await expect(service.ingest({ gameId: game.gameId, input: feed([kill()]) }, game.hostToken)).rejects.toThrow('injected');
+    expect(db.all(Event)).toHaveLength(0);
+    expect(db.all(ActivityLog)).toHaveLength(count);
+  });
+
+  test('no-op team joins do not log twice, and departed player snapshots survive deletion', async () => {
+    game = await service.runGame(settings);
+    a = await service.createPlayer({ playerName: 'Original name', gameCode: game.gameCode });
+    teams = (await service.getTeams(game.gameId)).teams;
+    await service.joinTeam({ player: a.playerId, team: teams[0].teamId }, a.playerToken);
+    await service.joinTeam({ player: a.playerId, team: teams[0].teamId }, a.playerToken);
+    db.all(Player)[0].playerName = 'Changed name';
+    await service.deletePlayer({ id: a.playerId }, a.playerToken);
+    const { items } = await service.getActivity({ gameId: game.gameId }, { hostToken: game.hostToken });
+    expect(items.filter(item => item.type === 'team_changed')).toHaveLength(1);
+    expect(items.find(item => item.type === 'player_joined').data.player.playerName).toBe('Original name');
+    expect(items.find(item => item.type === 'player_left').data.player.playerName).toBe('Changed name');
+  });
+
+  test('activity distinguishes initial champion selection, rotation and environment deaths', async () => {
+    await setup();
+    await service.ingest({ gameId: game.gameId, input: feed([kill(1, 'Turret_T200_L0_P3')], 190) }, game.hostToken);
+    await service.chooseChampion({ player: a.playerId, champion: champions[1].championId }, a.playerToken);
+    const { items } = await service.getActivity({ gameId: game.gameId }, { hostToken: game.hostToken });
+    expect(items.find(item => item.type === 'champion_rotated')).toMatchObject({
+      gameTime: 190, data: { previousChampion: { championName: 'Ahri' }, champion: { championName: 'Lux' } },
+    });
+    expect(items.find(item => item.type === 'champion_killed')).toMatchObject({
+      data: { killer: null, environment: 'Turret_T200_L0_P3', victim: { championName: 'Garen' } },
+    });
+    expect(items.filter(item => item.type === 'champion_selected')).toHaveLength(2);
+    expect(items.filter(item => item.type === 'reward_earned')).toHaveLength(0);
+  });
+
   test('HTTP accepts and ingests a valid event history above 100 KiB with authorization and idempotency intact', async () => {
     const module = await Test.createTestingModule({
       controllers: [CompanionController],

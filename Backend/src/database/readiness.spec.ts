@@ -16,6 +16,7 @@ const primaryKeys: Record<string, string[]> = {
   reward: ['rewardId'],
   takedown: ['takedownId'],
   event: ['eventId'],
+  activity_log: ['activityId'],
   champion_assists_takedown: ['championChampionId', 'takedownTakedownId'],
 };
 

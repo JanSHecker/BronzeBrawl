@@ -153,6 +153,20 @@ export class AppController {
     return this.gameflowUnavailable();
   }
 
+  @Get('gameActivity')
+  async getGameActivity(
+    @Query() query: Record<string, unknown>,
+    @Headers('x-game-token') hostToken: string,
+    @Headers('x-player-token') playerToken: string,
+  ) {
+    if (!this.gameflow) return this.gameflowUnavailable();
+    const optional = (field: string) => query[field] === undefined ? undefined : this.integerQuery(query[field], field);
+    return this.gameflow.getActivity({
+      gameId: this.integerQuery(query.gameId, 'gameId'), playerId: optional('playerId'),
+      before: optional('before'), after: optional('after'), limit: optional('limit'),
+    }, { hostToken, playerToken });
+  }
+
   @Get('getInvitation')
   async getInvitation(@Query('gameId') gameId, @Headers('x-game-token') token: string) {
     if (this.gameflow) return this.gameflow.getInvitation(this.integerQuery(gameId, 'gameId'), token);

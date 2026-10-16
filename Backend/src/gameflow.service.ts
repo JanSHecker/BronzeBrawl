@@ -1,6 +1,6 @@
 import { InjectDataSource } from '@nestjs/typeorm';
 import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { DataSource, LessThan, MoreThan } from 'typeorm';
 import { randomBytes, randomInt, createHash, timingSafeEqual } from 'crypto';
 import { Game } from './entities/game.entity';
 import { Player } from './entities/player.entity';
@@ -10,6 +10,7 @@ import { Event } from './entities/event.entity';
 import { Takedown } from './entities/takedown.entity';
 import { Reward } from './entities/reward.entity';
 import { Punishment } from './entities/punishment.entity';
+import { ActivityLog, ActivityType } from './entities/activity-log.entity';
 import { rotationRemainingSeconds, TIME_ROTATION_DURATION_SECONDS } from './rotation';
 
 export class GameflowError extends HttpException {
@@ -131,6 +132,59 @@ export class GameflowService {
 
   private token(): string {
     return randomBytes(32).toString('hex');
+  }
+
+  private activityPlayer(player: any): any {
+    return player ? { playerId: player.playerId, playerName: player.playerName } : null;
+  }
+
+  private activityChampion(champion: any, players: any[]): any {
+    if (!champion) return null;
+    const player = players.find(row => this.championId(row.champion) === champion.championId);
+    return {
+      championId: champion.championId, championName: champion.championName,
+      summonerName: champion.summonerName, player: this.activityPlayer(player),
+    };
+  }
+
+  private async recordActivity(store: Store, game: any, type: ActivityType, data: Record<string, any> = {}, gameTime = game.lastGameTime ?? null): Promise<void> {
+    await this.save(ActivityLog, {
+      gameId: game.gameId, type, recordedAt: new Date(), gameTime,
+      data: structuredClone(data),
+    }, store);
+  }
+
+  async getActivity(query: { gameId: number; playerId?: number; before?: number; after?: number; limit?: number }, auth: { hostToken?: string; playerToken?: string }): Promise<any> {
+    const gameId = this.id(query.gameId, 'gameId');
+    const limit = query.limit === undefined ? 50 : this.id(query.limit, 'limit');
+    if (limit > 100) this.fail('limit must not exceed 100');
+    const before = query.before === undefined ? undefined : this.id(query.before, 'before');
+    const after = query.after === undefined ? undefined : this.id(query.after, 'after');
+    if (before !== undefined && after !== undefined) this.fail('use either before or after');
+    const game = await this.getCompanionGame(gameId);
+    if (auth.hostToken) {
+      await this.authorizeHost(game, auth.hostToken);
+    } else {
+      if (!query.playerId || !auth.playerToken) this.fail('game capability required', HttpStatus.FORBIDDEN);
+      const player = await this.authorizePlayer(query.playerId, auth.playerToken);
+      if (this.gameId(player.game) !== gameId) this.fail('player belongs to another game', HttpStatus.FORBIDDEN);
+    }
+    let rows: any[];
+    if (this.database?.getRepository) {
+      rows = await this.database.getRepository(ActivityLog).find({
+        where: { gameId, ...(before !== undefined ? { activityId: LessThan(before) } : after !== undefined ? { activityId: MoreThan(after) } : {}) },
+        order: { activityId: after !== undefined ? 'ASC' : 'DESC' }, take: limit + 1,
+      });
+    } else {
+      rows = (await this.rows(ActivityLog)).filter(row => row.gameId === gameId
+        && (before === undefined || row.activityId < before) && (after === undefined || row.activityId > after))
+        .sort((a, b) => after !== undefined ? a.activityId - b.activityId : b.activityId - a.activityId).slice(0, limit + 1);
+    }
+    const items = rows.slice(0, limit).map(row => ({
+      activityId: row.activityId, gameId: row.gameId, type: row.type,
+      recordedAt: row.recordedAt, gameTime: row.gameTime, data: row.data,
+    }));
+    return { items, nextCursor: rows.length > limit ? items[items.length - 1].activityId : null };
   }
 
   private newGameCode(): string {
@@ -365,6 +419,7 @@ export class GameflowService {
       const red = await this.save(Team, { teamName: 1, game }, store);
       game.teams = [blue, red];
       await this.save(Game, game, store);
+      await this.recordActivity(store, game, 'game_created', { punishmentAmount, rewardAmount });
       return this.publicGame(game, hostToken);
     }, -1); // Separate advisory-lock namespace: serialize code allocation across API processes.
   }
@@ -540,6 +595,9 @@ export class GameflowService {
       if (game.state === 'ended' && (gameTime !== undefined && game.lastGameTime !== null && gameTime > game.lastGameTime)) {
         this.fail('game has ended', HttpStatus.CONFLICT);
       }
+      if (game.state === 'waiting_for_feed') {
+        await this.recordActivity(store, game, 'game_started', {}, gameTime ?? null);
+      }
       for (const raw of events) {
         const prior = existingEvents.find((event) => event.ingameId === raw.EventID);
         if (prior) {
@@ -553,6 +611,7 @@ export class GameflowService {
         existingEvents.push(event);
         if (raw.EventName === 'GameEnd') {
           game.state = 'ended';
+          await this.recordActivity(store, game, 'game_ended', { sourceEventId: raw.EventID }, raw.EventTime ?? gameTime ?? null);
           continue;
         }
         if (raw.EventName !== 'ChampionKill') continue;
@@ -577,17 +636,31 @@ export class GameflowService {
         await this.save(Event, event, store);
         const victimPlayer = await this.playerForChampion(victim, players);
         const killerPlayer = await this.playerForChampion(killer, players);
+        await this.recordActivity(store, game, 'champion_killed', {
+          sourceEventId: raw.EventID,
+          killer: this.activityChampion(killer, players), environment: killer ? null : raw.KillerName,
+          victim: this.activityChampion(victim, players),
+          assisters: assistors.map(champion => this.activityChampion(champion, players)),
+        }, raw.EventTime ?? gameTime ?? null);
         if (victimPlayer) {
           const punishment = await this.save(Punishment, {
             amount: game.punishmentAmount, punishmentType: 1, player: victimPlayer, takedown,
           }, store);
           takedown.punishment = punishment;
+          await this.recordActivity(store, game, 'punishment_assigned', {
+            punishmentId: punishment.punishmentId, amount: punishment.amount,
+            player: this.activityPlayer(victimPlayer), reason: 'death', sourceEventId: raw.EventID,
+          }, raw.EventTime ?? gameTime ?? null);
         }
         if (killerPlayer) {
           const reward = await this.save(Reward, {
             amount: game.rewardAmount, rewardType: 1, distributed: false, player: killerPlayer, takedown,
           }, store);
           takedown.reward = reward;
+          await this.recordActivity(store, game, 'reward_earned', {
+            rewardId: reward.rewardId, amount: reward.amount,
+            player: this.activityPlayer(killerPlayer), sourceEventId: raw.EventID,
+          }, raw.EventTime ?? gameTime ?? null);
         }
         // Persist both sides of the one-to-one links. This makes a restart or
         // repository reload return the same event consequences, rather than
@@ -625,6 +698,7 @@ export class GameflowService {
         playerName: input.playerName.trim(), game, team: null, champion: null,
         playerTokenHash: this.hash(rawToken),
       }, store);
+      await this.recordActivity(store, game, 'player_joined', { player: this.activityPlayer(player) });
       return {
         playerId: player.playerId,
         playerName: player.playerName,
@@ -663,8 +737,13 @@ export class GameflowService {
       if (player.champion) this.fail('cannot change team after champion selection', HttpStatus.CONFLICT);
       const members = (await this.rows(Player, store, ['team'])).filter((row) => this.teamId(row.team) === teamId);
       if (members.length >= 5 && this.teamId(player.team) !== teamId) this.fail('team is full', HttpStatus.CONFLICT);
+      const previousTeam = player.team ? this.publicTeam(player.team) : null;
+      const changed = this.teamId(player.team) !== teamId;
       player.team = team;
       await this.save(Player, player, store);
+      if (changed) await this.recordActivity(store, player.game, 'team_changed', {
+        player: this.activityPlayer(player), previousTeam, team: this.publicTeam(team),
+      });
       return this.publicPlayer(player);
     }, gameId);
   }
@@ -711,6 +790,9 @@ export class GameflowService {
       // this transaction after the game lock. Never clear an ownership link
       // that belongs to a newer owner if a stale relation is encountered.
       if (champion.player) this.fail('champion is occupied', HttpStatus.CONFLICT);
+      const previousChampion = player.champion ? {
+        championId: player.champion.championId, championName: player.champion.championName,
+      } : null;
       if (player.champion) {
         const currentChampion = await this.findOne(
           Champion,
@@ -734,6 +816,10 @@ export class GameflowService {
       player.champion = champion;
       await this.save(Champion, champion, store);
       await this.save(Player, player, store);
+      await this.recordActivity(store, game, previousChampion ? 'champion_rotated' : 'champion_selected', {
+        player: this.activityPlayer(player), previousChampion,
+        champion: { championId: champion.championId, championName: champion.championName },
+      });
       return this.publicChampion(champion);
     }, gameId);
   }
@@ -828,6 +914,15 @@ export class GameflowService {
       }, store);
       reward.distributed = true;
       await this.save(Reward, reward, store);
+      const distribution = {
+        rewardId, punishmentId: punishment.punishmentId, amount: reward.amount,
+        player: this.activityPlayer(owner), recipient: this.activityPlayer(recipient),
+      };
+      await this.recordActivity(store, game, 'reward_distributed', distribution);
+      await this.recordActivity(store, game, 'punishment_assigned', {
+        punishmentId: punishment.punishmentId, amount: punishment.amount,
+        player: this.activityPlayer(recipient), distributor: this.activityPlayer(owner), reason: 'reward', rewardId,
+      });
       return this.publicPunishment(punishment);
     });
   }
@@ -844,8 +939,12 @@ export class GameflowService {
       const punishment = await this.findOne(Punishment, (row) => row.punishmentId === punishmentId, store, ['player']);
       if (!punishment) this.fail('punishment not found', HttpStatus.NOT_FOUND);
       const player = await this.authorizePlayer(this.playerId(punishment.player), token, store);
+      if (punishment.recieved) return this.publicPunishment(punishment);
       punishment.recieved = true;
       await this.save(Punishment, punishment, store);
+      await this.recordActivity(store, player.game, 'punishment_confirmed', {
+        punishmentId, amount: punishment.amount, player: this.activityPlayer(player),
+      });
       return this.publicPunishment(punishment);
     }, gameId);
   }
@@ -869,6 +968,7 @@ export class GameflowService {
         player.champion.rotationEndsAtGameTime = null;
         await this.save(Champion, player.champion, store);
       }
+      await this.recordActivity(store, player.game, 'player_left', { player: this.activityPlayer(player) });
       await this.remove(Player, player, store);
     }, gameId);
   }

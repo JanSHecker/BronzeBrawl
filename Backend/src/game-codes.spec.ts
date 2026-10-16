@@ -15,14 +15,15 @@ import { GameflowService } from './gameflow.service';
 import { Game } from './entities/game.entity';
 import { Player } from './entities/player.entity';
 import { Team } from './entities/team.entity';
+import { ActivityLog } from './entities/activity-log.entity';
 import { GameCodes1792200000000 } from '../migrations/1792200000000-GameCodes';
 
 class MemoryDB {
-  rows = new Map<any, any[]>([[Game, []], [Player, []], [Team, []]]);
+  rows = new Map<any, any[]>([[Game, []], [Player, []], [Team, []], [ActivityLog, []]]);
   async find(type: any) { return this.rows.get(type) || []; }
   async save(type: any, value: any) {
     const rows = this.rows.get(type)!;
-    const key = type === Game ? 'gameId' : type === Player ? 'playerId' : 'teamId';
+    const key = type === Game ? 'gameId' : type === Player ? 'playerId' : type === ActivityLog ? 'activityId' : 'teamId';
     if (!value[key]) { value[key] = rows.length + 1; rows.push(value); }
     return value;
   }
@@ -111,6 +112,15 @@ test('HTTP requires codes, keeps host recovery authenticated and rate-limits loo
     await request(http).get('/getInvitation').query({ gameId: game.gameId }).expect(403);
     await request(http).get('/getInvitation').query({ gameId: game.gameId }).set('X-Game-Token', game.hostToken)
       .expect(200).expect(({ body }) => expect(body.gameCode).toBe(game.gameCode));
+    await request(http).get('/gameActivity').query({ gameId: game.gameId }).expect(403);
+    await request(http).get('/gameActivity').query({ gameId: game.gameId }).set('X-Game-Token', game.hostToken)
+      .expect(200).expect(({ body }) => {
+        expect(body.items).toEqual([expect.objectContaining({ type: 'game_created', gameId: game.gameId })]);
+        expect(body.nextCursor).toBeNull();
+      });
+    for (const invalid of [{ gameId: 'bad' }, { gameId: game.gameId, before: '0' }, { gameId: game.gameId, limit: '101' }, { gameId: game.gameId, after: '1', before: '2' }]) {
+      await request(http).get('/gameActivity').query(invalid).set('X-Game-Token', game.hostToken).expect(400);
+    }
     await request(http).get('/getSettings').query({ gameCode: game.gameCode.toLowerCase() }).expect(200);
     await request(http).post('/createPlayer').send({ playerName: 'Alice', gameCode: game.gameCode })
       .expect(201).expect(({ body }) => expect(body.game).toBe(game.gameId));

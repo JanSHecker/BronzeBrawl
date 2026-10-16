@@ -9,6 +9,7 @@ export const REQUIRED_APPLICATION_TABLES = [
   'reward',
   'takedown',
   'event',
+  'activity_log',
   'champion_assists_takedown',
 ] as const;
 
@@ -25,6 +26,7 @@ export const REQUIRED_APPLICATION_COLUMNS: Record<string, readonly string[]> = {
   reward: ['rewardId', 'amount', 'rewardType', 'distributed', 'playerPlayerId'],
   takedown: ['takedownId', 'multiKill', 'shutdown', 'killerChampionId', 'killedChampionId', 'punishmentPunishmentId', 'rewardRewardId'],
   event: ['eventId', 'ingameId', 'eventType', 'gameGameId', 'takedownTakedownId', 'rewardRewardId', 'payload'],
+  activity_log: ['activityId', 'gameId', 'type', 'recordedAt', 'gameTime', 'data'],
   champion_assists_takedown: ['championChampionId', 'takedownTakedownId'],
 };
 
@@ -34,6 +36,7 @@ export const REQUIRED_UNIQUE_CONSTRAINTS = [
 ] as const;
 
 export const REQUIRED_FOREIGN_KEYS = [
+  ['activity_log', ['gameId'], 'game', ['gameId']],
   ['team', ['gameGameId'], 'game', ['gameId']],
   ['champion', ['teamTeamId'], 'team', ['teamId']],
   ['player', ['teamTeamId'], 'team', ['teamId']],
@@ -61,6 +64,7 @@ export const REQUIRED_MIGRATIONS = [
   { name: 'GameCodes1792200000000', timestamp: 1792200000000 },
   { name: 'ChampionRotationTimer1792300000000', timestamp: 1792300000000 },
   { name: 'TimeOnlyRotation1792400000000', timestamp: 1792400000000 },
+  { name: 'ActivityLog1792500000000', timestamp: 1792500000000 },
 ] as const;
 
 export type DatabaseReadiness =
@@ -171,6 +175,7 @@ export async function checkDatabaseReadiness(
       game: ['gameId'], team: ['teamId'], champion: ['championId'], player: ['playerId'],
       punishment: ['punishmentId'], reward: ['rewardId'], takedown: ['takedownId'], event: ['eventId'],
       champion_assists_takedown: ['championChampionId', 'takedownTakedownId'],
+      activity_log: ['activityId'],
     };
     for (const [table, columns] of Object.entries(primaryKeyColumns)) {
       if (!hasConstraint(table, 'PRIMARY KEY', columns)) missingTables.add(table);

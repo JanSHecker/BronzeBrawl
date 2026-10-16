@@ -8,6 +8,7 @@ import { Event } from '../entities/event.entity';
 import { Takedown } from '../entities/takedown.entity';
 import { Game } from '../entities/game.entity';
 import { Champion } from '../entities/champion.entity';
+import { ActivityLog } from '../entities/activity-log.entity';
 import { TimeOnlyRotation1792400000000 } from '../../migrations/1792400000000-TimeOnlyRotation';
 
 const enabled = Boolean(process.env.TEST_DATABASE_URL);
@@ -79,6 +80,16 @@ const feed = (events: any[] = [], time = 20) => ({ allPlayers: roster, events: {
     const event = await database.getRepository(Event).findOne({ where: { game: { gameId: game.gameId } }, relations: ['takedown', 'takedown.reward', 'takedown.punishment'] });
     expect(event.takedown.reward.amount).toBe(9);
     expect(event.takedown.punishment.amount).toBe(7);
+    const history = await restarted.getActivity({ gameId: game.gameId }, { hostToken: game.hostToken });
+    expect(history.items.filter(item => item.type === 'champion_killed')).toHaveLength(1);
+    expect(history.items.find(item => item.type === 'champion_killed')).toMatchObject({
+      gameTime: 1, data: { killer: { championName: 'Ahri', player: { playerName: 'audit-blue' } } },
+    });
+    const first = await restarted.getActivity({ gameId: game.gameId, limit: 2 }, { hostToken: game.hostToken });
+    const older = await restarted.getActivity({ gameId: game.gameId, before: first.nextCursor, limit: 2 }, { hostToken: game.hostToken });
+    expect(older.items[0].activityId).toBeLessThan(first.items[1].activityId);
+    const newer = await restarted.getActivity({ gameId: game.gameId, after: older.items[0].activityId }, { hostToken: game.hostToken });
+    expect(newer.items.map(item => item.activityId)).toEqual(first.items.map(item => item.activityId).reverse());
   });
 
   test('champion timers persist in PostgreSQL, honor adjusted deadlines and reset on takeover', async () => {
@@ -153,6 +164,7 @@ const feed = (events: any[] = [], time = 20) => ({ allPlayers: roster, events: {
 
   test('an actual transaction rolls back events and consequences without changing timers before retry', async () => {
     const { game, a } = await setup();
+    const activityCount = await database.getRepository(ActivityLog).countBy({ gameId: game.gameId });
     const failing = new GameflowService({ options: database.options, manager: {
       transaction: (work: any) => database.transaction(manager => work({
         query: manager.query.bind(manager),
@@ -161,6 +173,7 @@ const feed = (events: any[] = [], time = 20) => ({ allPlayers: roster, events: {
     } } as any);
     await expect(failing.ingest({ gameId: game.gameId, input: feed([kill(1)]) }, game.hostToken)).rejects.toThrow('injected reward failure');
     expect(await database.getRepository(Event).countBy({ game: { gameId: game.gameId } })).toBe(0);
+    expect(await database.getRepository(ActivityLog).countBy({ gameId: game.gameId })).toBe(activityCount);
     expect((await service.status(a.playerId, a.playerToken)).rotationRemainingSeconds).toBe(180);
     await service.ingest({ gameId: game.gameId, input: feed([kill(1)]) }, game.hostToken);
     expect((await service.status(a.playerId, a.playerToken)).rewards).toHaveLength(1);

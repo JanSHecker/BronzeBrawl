@@ -29,6 +29,7 @@ export interface RewardChoice {
   minTargets?: number;
   maxTargets?: number;
   perTarget?: boolean;
+  perRemainingMinute?: boolean;
   weight?: number;
   conversions?: { shots: number; chugs: number };
 }
@@ -99,7 +100,7 @@ export function rewardConfiguration(env: NodeJS.ProcessEnv = process.env) {
       for (const field of ['minTargets', 'maxTargets']) {
         if (choice[field] !== undefined && (!Number.isInteger(choice[field]) || choice[field] < 1 || choice[field] > 5)) throw new Error(`Invalid ${entry.id}.${field}`);
       }
-      for (const field of ['forceSwitch', 'breaksShields', 'perTarget']) {
+      for (const field of ['forceSwitch', 'breaksShields', 'perTarget', 'perRemainingMinute']) {
         if (choice[field] !== undefined && typeof choice[field] !== 'boolean') throw new Error(`Invalid ${entry.id}.${field}`);
       }
       if (choice.perTarget && !choice.minTargets) throw new Error(`Missing recipient count: ${entry.id}`);

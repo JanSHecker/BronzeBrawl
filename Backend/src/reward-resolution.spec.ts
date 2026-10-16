@@ -100,9 +100,10 @@ describe('solo reward resolution', () => {
     await service.joinTeam({ player: opponent.playerId, team: teams[1].teamId }, opponent.playerToken);
     const request = { id: reward.rewardId, recipientId: DUMMY_RECIPIENT_ID, unit: 'sips', expectedVersion: 1 };
     await expect(service.distributeReward(request, owner.playerToken)).rejects.toMatchObject({ status: 403 });
-    const result = await service.distributeReward({ ...request, recipientId: opponent.playerId }, owner.playerToken);
+    await service.distributeReward({ ...request, recipientId: opponent.playerId }, owner.playerToken);
+    const result = await service.distributeReward({ ...request, recipientId: opponent.playerId, expectedVersion: 2 }, owner.playerToken);
     expect(result.distributed).toBe(true);
-    expect(db.all(Punishment)).toHaveLength(1);
+    expect(db.all(Punishment)).toHaveLength(2);
     expect(db.all(Punishment)[0].player.playerId).toBe(opponent.playerId);
   });
 });
@@ -123,7 +124,7 @@ describe('post-game settlement', () => {
     const timeReward = await savedOffer('standard', 'encore');
     expect((await service.chooseReward({ id: timeReward.rewardId, choiceId: 'encore' }, owner.playerToken)).distributed).toBe(true);
     expect(db.all(Champion)[0].rotationEndsAtGameTime).toBe(deadline);
-    for (const expectedVersion of [0, 1]) {
+    for (const expectedVersion of [0, 1, 2]) {
       await service.distributeReward({ id: reward.rewardId, recipientId: opponent.playerId, unit: 'sips', expectedVersion }, owner.playerToken);
     }
     for (const punishment of db.all(Punishment)) {

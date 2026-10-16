@@ -1,22 +1,24 @@
 {
   "standard": [
-    { "id": "marked", "name": "Marked", "mode": "single", "amounts": { "sips": 2 } },
-    { "id": "crossfire", "name": "Crossfire", "mode": "split", "amounts": { "sips": 3 }, "minTargets": 2, "maxTargets": 2 },
-    { "id": "stray-bullet", "name": "Stray Bullet", "mode": "random", "amounts": { "sips": 3 } },
-    { "id": "bank-shot", "name": "Bank Shot", "mode": "single", "amounts": { "sips": 1 }, "randomBonus": { "sips": 2 } },
+    { "id": "marked", "name": "Marked", "mode": "single", "amounts": { "sips": 3 } },
+    { "id": "crossfire", "name": "Crossfire", "mode": "split", "amounts": { "sips": 4 }, "minTargets": 2, "maxTargets": 2 },
+    { "id": "stray-bullet", "name": "Stray Bullet", "mode": "random", "amounts": { "sips": 5 } },
+    { "id": "volley", "name": "Volley", "mode": "enemy_team", "amounts": { "sips": 1 } },
     { "id": "encore", "name": "Encore", "mode": "self", "amounts": {}, "timeSeconds": 120 },
-    { "id": "champions-sacrifice", "name": "Champion’s Sacrifice", "mode": "single", "amounts": { "shots": 1 }, "forceSwitch": true },
+    { "id": "close-combat", "name": "Close Combat", "mode": "single", "amounts": { "shots": 2 }, "selfAmounts": { "shots": 1 } },
     { "id": "pocket-shield", "name": "Pocket Shield", "mode": "self", "amounts": {}, "shield": { "sips": 2 } },
-    { "id": "burning-bright", "name": "Burning Bright", "mode": "single", "amounts": { "shots": 1 }, "timeSeconds": -60 }
+    { "id": "burning-bright", "name": "Burning Bright", "mode": "single", "amounts": { "shots": 1 }, "perRemainingMinute": true, "forceSwitch": true }
   ],
   "revenge": [
     { "id": "parting-gift", "name": "Parting Gift", "tier": "small", "mode": "single", "amounts": { "sips": 1 } },
     { "id": "petty-revenge", "name": "Petty Revenge", "tier": "small", "mode": "random", "amounts": { "sips": 2 } },
     { "id": "spread-the-blame", "name": "Spread the Blame", "tier": "small", "mode": "split", "amounts": { "sips": 2 }, "minTargets": 2, "maxTargets": 2 },
     { "id": "escape-hatch", "name": "Escape Hatch", "tier": "small", "mode": "self", "amounts": {}, "selfAmounts": { "sips": 3 }, "forceSwitch": true },
+    { "id": "short-fuse", "name": "Short Fuse", "tier": "small", "mode": "self", "amounts": {}, "timeSeconds": -60 },
     { "id": "loaded-coin", "name": "Loaded Coin", "tier": "risky", "mode": "single", "amounts": { "shots": 1 }, "successChance": 0.5, "failureAmounts": { "shots": 1 } },
     { "id": "stubborn-streak", "name": "Stubborn Streak", "tier": "risky", "mode": "single", "amounts": { "shots": 1 }, "timeSeconds": 120 },
-    { "id": "jackpot-or-disaster", "name": "Jackpot or Disaster", "tier": "risky", "mode": "single", "amounts": { "chugs": 1 }, "successChance": 0.3333333333333333, "failureAmounts": { "shots": 1 }, "failureTimeSeconds": 120 },
+    { "id": "jackpot-or-disaster", "name": "Jackpot or Disaster", "tier": "risky", "mode": "single", "amounts": { "chugs": 1 }, "successChance": 0.3333333333333333, "failureAmounts": { "chugs": 1 }, "failureTimeSeconds": 120 },
+    { "id": "suicide-bomber", "name": "Suicide Bomber", "tier": "risky", "mode": "single", "amounts": { "chugs": 1 }, "selfAmounts": { "chugs": 1 } },
     { "id": "blast-radius", "name": "Blast Radius", "tier": "risky", "mode": "free", "amounts": { "sips": 10 }, "successChance": 0.5, "failureAmounts": { "shots": 1 }, "failureTimeSeconds": 120 }
   ],
   "turret": [
@@ -31,13 +33,12 @@
   ],
   "epic": [
     { "id": "dragons-breath", "name": "Dragon’s Breath", "mode": "single", "amounts": { "shots": 1 }, "breaksShields": true },
-    { "id": "divide-and-conquer", "name": "Divide and Conquer", "mode": "split", "amounts": { "sips": 6 }, "minTargets": 2, "maxTargets": 2 },
-    { "id": "monsters-mark", "name": "Monster’s Mark", "mode": "random", "amounts": { "shots": 1, "sips": 2 } },
-    { "id": "shockwave", "name": "Shockwave", "mode": "team", "amounts": { "sips": 6 } },
-    { "id": "pincer-attack", "name": "Pincer Attack", "mode": "split", "amounts": { "sips": 3 }, "perTarget": true, "minTargets": 2, "maxTargets": 2 },
-    { "id": "monster-hide", "name": "Monster Hide", "mode": "self", "amounts": {}, "shield": { "shots": 1 } },
-    { "id": "long-hunt", "name": "Long Hunt", "mode": "single", "amounts": { "sips": 3 }, "timeSeconds": 120 },
-    { "id": "monster-trade", "name": "Monster Trade", "mode": "single", "amounts": { "shots": 1 }, "timeSeconds": -60 }
+    { "id": "divide-and-conquer", "name": "Divide and Conquer", "mode": "split", "amounts": { "sips": 5 }, "perTarget": true, "minTargets": 2, "maxTargets": 2 },
+    { "id": "monsters-mark", "name": "Monster’s Mark", "mode": "random", "amounts": { "sips": 7 } },
+    { "id": "shockwave", "name": "Shockwave", "mode": "enemy_team", "amounts": { "sips": 3 } },
+    { "id": "monster-hide", "name": "Monster Hide", "mode": "free", "amounts": { "sips": 3 }, "shield": { "shots": 1 } },
+    { "id": "long-hunt", "name": "Long Hunt", "mode": "single", "amounts": { "sips": 7 }, "timeSeconds": 120 },
+    { "id": "monster-trade", "name": "Monster Trade", "mode": "split", "amounts": { "shots": 1 }, "perTarget": true, "minTargets": 2, "maxTargets": 2, "timeSeconds": -60 }
   ],
   "pentakill": [
     { "id": "pentakill", "name": "Pentakill", "mode": "enemy_team", "amounts": { "chugs": 1 }, "shield": { "sips": 10 }, "breaksShields": true }
@@ -47,9 +48,9 @@
     { "id": "double-trouble", "name": "Double Trouble", "mode": "split", "amounts": { "shots": 1, "sips": 2 }, "perTarget": true, "minTargets": 2, "maxTargets": 2, "breaksShields": true },
     { "id": "three-headed-monster", "name": "Three-Headed Monster", "mode": "split", "amounts": { "shots": 1 }, "perTarget": true, "minTargets": 3, "maxTargets": 3, "breaksShields": true },
     { "id": "kings-decree", "name": "King’s Decree", "mode": "free", "amounts": { "sips": 12 }, "breaksShields": true },
-    { "id": "chaos-crown", "name": "Chaos Crown", "mode": "random", "amounts": { "chugs": 1, "sips": 3 }, "breaksShields": true },
-    { "id": "royal-volley", "name": "Royal Volley", "mode": "split", "amounts": { "shots": 3 }, "minTargets": 2, "maxTargets": 3, "breaksShields": true },
-    { "id": "royal-tribute", "name": "Royal Tribute", "mode": "single", "amounts": { "shots": 2 }, "timeSeconds": -120, "breaksShields": true },
-    { "id": "last-stand", "name": "Last Stand", "mode": "single", "amounts": { "chugs": 1 }, "forceSwitch": true, "breaksShields": true }
+    { "id": "chaos-crown", "name": "Chaos Crown", "mode": "split", "amounts": { "chugs": 1 }, "selfAmounts": { "chugs": 1 }, "perTarget": true, "minTargets": 3, "maxTargets": 3, "breaksShields": true },
+    { "id": "royal-volley", "name": "Royal Volley", "mode": "enemy_team", "amounts": { "shots": 1 }, "breaksShields": true },
+    { "id": "royal-tribute", "name": "Royal Tribute", "mode": "split", "amounts": { "shots": 1 }, "perTarget": true, "minTargets": 3, "maxTargets": 3, "timeSeconds": -120, "breaksShields": true },
+    { "id": "last-stand", "name": "Last Stand", "mode": "split", "amounts": { "chugs": 1 }, "perTarget": true, "minTargets": 2, "maxTargets": 2, "forceSwitch": true, "breaksShields": true }
   ]
 }

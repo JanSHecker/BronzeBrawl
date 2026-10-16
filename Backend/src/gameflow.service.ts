@@ -1290,7 +1290,7 @@ export class GameflowService {
   }
 
   private choiceEligible(choice: RewardChoice, owner: any, opponents: any[], game: any): boolean {
-    if (game.state !== 'ended' && (choice.timeSeconds || choice.failureTimeSeconds || choice.forceSwitch) && !owner.champion) return false;
+    if (game.state !== 'ended' && (choice.timeSeconds || choice.failureTimeSeconds || choice.forceSwitch || choice.perRemainingMinute) && !owner.champion) return false;
     // The dummy sink can consume any recipient budget without creating fake players.
     if (!opponents.length) return true;
     if (choice.mode !== 'self' && opponents.length < (choice.minTargets || 1)) return false;
@@ -1346,6 +1346,11 @@ export class GameflowService {
       if (!this.choiceEligible(choice, owner, opponents, game)) this.fail('reward is not currently usable', HttpStatus.CONFLICT);
       const success = choice.successChance === undefined || randomInt(1_000_000_000) / 1_000_000_000 < choice.successChance;
       const remaining = { ...emptyAmounts(), ...choice.amounts };
+      if (choice.perRemainingMinute) {
+        // Snapshot the budget at commitment, before the champion is released.
+        const minutes = Math.ceil((rotationRemainingSeconds(owner.champion, game.lastGameTime) || 0) / 60);
+        for (const unit of REWARD_UNITS) remaining[unit] *= minutes;
+      }
       if (choice.perTarget) for (const unit of REWARD_UNITS) remaining[unit] *= choice.minTargets;
       if (choice.mode === 'enemy_team') for (const unit of REWARD_UNITS) remaining[unit] *= Math.max(1, opponents.length);
       if (!success) for (const unit of REWARD_UNITS) remaining[unit] = 0;

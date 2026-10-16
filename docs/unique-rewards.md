@@ -9,7 +9,7 @@ and conversions without joining a game. The old Turret-only entries are marked
 legacy; new turret chests share the Normal pool.
 
 `Backend/src/reward-catalog.json` is the declarative 1× catalogue: eight Normal
-(stored as `standard`), eight Revenge (four small/four risky), eight Epic, and
+(stored as `standard`), ten Revenge (five small/five risky), seven Epic, and
 eight Legendary rewards, plus retained legacy Turret offers.
 Pentakill adds a separate single-entry pool with no random alternative: one chug
 per enemy, break each enemy's full shield, and grant ten shield points to the owner
@@ -25,6 +25,37 @@ The catalogue specifies native `amounts` (`sips`, `shots`, `chugs`), targeting
 mode, minimum/maximum recipients, optional per-recipient budgets, random bonuses,
 shield grants, champion time changes, forced switching, odds and failure costs.
 Reward-handling code does not embed per-reward quantities.
+
+Normal rewards at baseline: Marked assigns three sips; Crossfire splits four
+sips between two opponents; Stray Bullet assigns five sips to a random opponent;
+Volley assigns one sip to every enemy; Close Combat costs one shot and assigns
+two shots to one opponent. Bank Shot and Champion’s Sacrifice are no longer drawn.
+Burning Bright assigns one shot per remaining champion minute (rounded up), then
+immediately releases the champion. Its `perRemainingMinute` budget is calculated
+when chosen, before the switch, and persisted for retries and later distribution.
+Each minute's budget scales with difficulty like a per-target budget. Without a
+champion after game end, its remaining-minute budget is zero.
+
+Revenge's risky Suicide Bomber costs one chug and assigns one chug to a chosen
+opponent. Small Short Fuse removes sixty seconds from the owner's champion timer,
+releasing the champion if the timer reaches zero. Jackpot or Disaster's failure
+cost is one chug plus 120 seconds on the champion; its odds and success reward
+are unchanged. Drinking quantities scale with difficulty; timer changes do not.
+
+Epic rewards at baseline: Divide and Conquer assigns five sips each to two
+opponents; Monster’s Mark assigns seven sips to one random opponent; Shockwave
+assigns three sips to every opponent; Long Hunt assigns seven sips and keeps its
++120-second champion extension. Monster Trade assigns one shot each to two
+opponents and keeps its −60-second timer change. Monster Hide grants its existing
+one-shot-equivalent shield plus three sips to distribute freely. Pincer Attack
+is no longer drawn; previously saved offers remain usable.
+
+Legendary rewards at baseline: Last Stand assigns one chug each to two opponents
+and forces a champion switch. Royal Tribute assigns one shot each to three
+opponents and keeps its −120-second timer change. Royal Volley assigns one shot
+to every opponent. Chaos Crown costs the owner one chug and assigns one chug each
+to three chosen opponents. All retain shield-breaking on enemy assignments;
+personal costs follow the normal shield rules.
 
 Backend environment settings (also shown in `.env.prod.example`):
 
@@ -157,7 +188,7 @@ also require installed Playwright Chromium, or
 
 Unit tests cover every catalogue entry at every difficulty, conversions, offer
 persistence, recipient constraints, retries, transactional rollback, backfires,
-time and forced rotation. Real browser tests exercise all 40 entries plus the
+time and forced rotation. Real browser tests exercise all 42 entries plus the
 eight shared Support entries against HTTP/PostgreSQL, mixed-unit ordering,
 shield breaking/absorption, rapid taps, lost-response recovery, reloads, forced
 switches, and four difficulties. Compact-layout tests cover 320×480 to 390×844.

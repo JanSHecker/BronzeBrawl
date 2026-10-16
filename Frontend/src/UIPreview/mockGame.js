@@ -44,7 +44,7 @@ export function createPreviewGame() {
       if (endpoint === 'openChest') {
         chest.openedAt = new Date().toISOString();
         chest.choices = [
-          { id: 'marked', name: 'Marked', mode: 'single', tier: 'small', amounts: { sips: 2, shots: 0, chugs: 0 } },
+          { id: 'marked', name: 'Marked', mode: 'single', tier: 'small', amounts: { sips: 3, shots: 0, chugs: 0 } },
           { id: 'shield', name: 'Shield', mode: 'self', tier: 'small', amounts: {}, shieldPoints: 2 },
         ];
       } else if (endpoint === 'chooseReward') {

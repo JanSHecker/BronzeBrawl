@@ -43,7 +43,7 @@ for (const pool of ['standard', 'support', 'revenge', 'turret', 'epic', 'legenda
       expect(persisted.distribution.remaining).toEqual({ sips: 0, shots: 0, chugs: 0 });
       const opponents = await Promise.all(context.opponents.map(player => context.service.status(player.playerId, player.playerToken)));
       for (const unit of ['sips', 'shots', 'chugs']) {
-        const expected = (choice.amounts[unit] || 0) * (choice.mode === 'enemy_team' ? context.opponents.length : choice.perTarget ? choice.minTargets : 1) + (choice.randomBonus[unit] || 0);
+        const expected = (choice.amounts[unit] || 0) * (choice.mode === 'enemy_team' ? context.opponents.length : choice.perTarget ? choice.minTargets : choice.perRemainingMinute ? 3 : 1) + (choice.randomBonus[unit] || 0);
         expect(opponents.reduce((sum, player) => sum + player.punishmentTotals[unit], 0)).toBe(expected);
       }
       const owner = await context.service.status(context.owner.playerId, context.owner.playerToken);
@@ -118,11 +118,13 @@ test('a lost tap response retries the same request without double assigning', as
   await page.getByRole('button', { name: 'Give 1 sips to Garen. Shield 0/10.' }).click();
   await expect(page.getByRole('button', { name: 'Retry tap' })).toBeVisible();
   await page.getByRole('button', { name: 'Retry tap' }).click();
-  await expect(page.getByText('Distribute sips · 1 remaining')).toBeVisible();
+  await expect(page.getByText('Distribute sips · 2 remaining')).toBeVisible();
   expect((await context.service.status(context.opponents[0].playerId, context.opponents[0].playerToken)).punishmentTotals.sips).toBe(1);
   await page.getByRole('button', { name: 'Give 1 sips to Garen. Shield 0/10.' }).click();
+  await expect(page.getByText('Distribute sips · 1 remaining')).toBeVisible();
+  await page.getByRole('button', { name: 'Give 1 sips to Garen. Shield 0/10.' }).click();
   await expect(page.getByText('Complete', { exact: true })).toBeVisible();
-  expect((await context.service.status(context.opponents[0].playerId, context.opponents[0].playerToken)).punishmentTotals.sips).toBe(2);
+  expect((await context.service.status(context.opponents[0].playerId, context.opponents[0].playerToken)).punishmentTotals.sips).toBe(3);
 });
 
 test('rapid taps are queued, conserve the budget and require no confirmation', async ({ page }) => {
@@ -152,6 +154,7 @@ test('normal shields absorb new shots but never remove banked punishments', asyn
   await page.getByRole('button', { name: 'Monster Trade', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Give 1 shots to Garen. Shield 2/10.' }).locator('.status-shield-badge')).toHaveText('2/10');
   await page.getByRole('button', { name: 'Give 1 shots to Garen. Shield 2/10.' }).click();
+  await page.getByRole('button', { name: 'Give 1 shots to Jinx. Shield 0/10.' }).click();
   await expect(page.getByText('Complete', { exact: true })).toBeVisible();
   expect((await database.getRepository(Punishment).findOneBy({ punishmentId: old.punishmentId })).remainingAmount).toBe(7);
   expect((await context.service.status(recipient.playerId, recipient.playerToken)).punishmentTotals).toEqual({ sips: 10, shots: 0, chugs: 0 });
@@ -165,11 +168,11 @@ test('revenge backfire is final, adds personal punishment and prolongs champion 
   await page.getByRole('button', { name: 'Jackpot or Disaster', exact: true }).click();
   await expect(page.getByText('Backfired', { exact: true })).toBeVisible();
   const status = await context.service.status(context.owner.playerId, context.owner.playerToken);
-  expect(status.punishmentTotals.shots).toBe(1);
+  expect(status.punishmentTotals.chugs).toBe(1);
   expect(status.rotationRemainingSeconds).toBe(300);
   await page.reload();
   expect((await database.getRepository(Reward).findOneBy({ rewardId: reward.rewardId })).distribution.outcome).toBe('backfire');
-  expect((await context.service.status(context.owner.playerId, context.owner.playerToken)).punishmentTotals.shots).toBe(1);
+  expect((await context.service.status(context.owner.playerId, context.owner.playerToken)).punishmentTotals.chugs).toBe(1);
 });
 
 test('timer expiry forces release and different selection; immediate escape cannot retain champion', async ({ page }) => {

@@ -22,12 +22,15 @@ async function teammate(index: number) {
   await service.chooseChampion({ player: player.playerId, champion: blue[index].championId }, player.playerToken);
   return player;
 }
-async function rewardSwitch(id = 'champions-sacrifice') {
-  const enemy = await service.createPlayer({ playerName: 'Enemy', gameCode: game.gameCode });
-  await service.joinTeam({ player: enemy.playerId, team: teams[1].teamId }, enemy.playerToken);
+async function rewardSwitch(id = 'burning-bright') {
   const config = rewardConfiguration({});
-  const choice = scaledChoice(config.pools.standard.find(row => row.id === id), 'baseline', config);
-  const reward = await db.save(Reward, { player: storedPlayer(), amount: 2, chestType: 'standard',
+  const [pool, choices] = Object.entries(config.pools).find(([, entries]) => entries.some(row => row.id === id));
+  const choice = scaledChoice(choices.find(row => row.id === id), 'baseline', config);
+  for (let index = 0; index < (choice.minTargets || 1); index++) {
+    const enemy = await service.createPlayer({ playerName: `Enemy ${index}`, gameCode: game.gameCode });
+    await service.joinTeam({ player: enemy.playerId, team: teams[1].teamId }, enemy.playerToken);
+  }
+  const reward = await db.save(Reward, { player: storedPlayer(), amount: 2, chestType: pool,
     openedAt: new Date(), choices: [choice], distributed: false });
   await service.chooseReward({ id: reward.rewardId, choiceId: id }, owner.playerToken);
 }
@@ -97,7 +100,7 @@ test('manual selection cancels the pending automatic assignment', async () => {
   expect(db.all(ActivityLog).some(row => row.data.automatic)).toBe(false);
 });
 
-test.each(['champions-sacrifice', 'burning-bright'])('%s starts the grace period when its switch takes effect', async id => {
+test.each(['burning-bright', 'escape-hatch'])('%s starts the grace period when its switch takes effect', async id => {
   await ingest(150);
   await rewardSwitch(id);
   expect(await status()).toMatchObject({ champion: null, championSelectionRemainingSeconds: 30 });
@@ -108,7 +111,7 @@ test.each(['champions-sacrifice', 'burning-bright'])('%s starts the grace period
 });
 
 test('a reward that only shortens an active timer does not start selection early', async () => {
-  await rewardSwitch('burning-bright');
+  await rewardSwitch('monster-trade');
   expect(await status()).toMatchObject({ rotationRemainingSeconds: 120, championSelectionRemainingSeconds: null });
   await ingest(130);
   expect(await status()).toMatchObject({ champion: null, championSelectionRemainingSeconds: 30 });

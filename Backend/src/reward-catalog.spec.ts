@@ -10,7 +10,7 @@ test.each(['easy', 'baseline', 'hard', 'terror'] as Difficulty[])('public catalo
   for (const [pool, choices] of Object.entries(config.pools)) {
     expect(result.pools[pool]).toEqual(choices.map(choice => scaledChoice(choice, difficulty, config)));
   }
-  expect(Object.values(result.pools).flat()).toHaveLength(41);
+  expect(Object.values(result.pools).flat()).toHaveLength(42);
   expect(result.pools.pentakill[0].shieldPoints).toBeLessThanOrEqual(10);
 });
 

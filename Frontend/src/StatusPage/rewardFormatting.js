@@ -13,7 +13,8 @@ export function choiceDescription(input) {
   const parts = [];
   if (amountText(choice.amounts)) {
     const target = { single: 'to one opponent', split: 'between opponents', free: 'however you like', random: 'to a random opponent', scatter: 'randomly, one unit at a time', team: 'evenly across opponents', enemy_team: 'to every opponent' }[choice.mode];
-    parts.push(`${amountText(choice.amounts)}${choice.perTarget || choice.mode === 'enemy_team' ? ' per target' : ' total'} ${target || ''}`);
+    const budget = choice.perRemainingMinute ? ' per remaining champion minute (rounded up)' : choice.perTarget || choice.mode === 'enemy_team' ? ' per target' : ' total';
+    parts.push(`${amountText(choice.amounts)}${budget} ${target || ''}`);
   }
   if (choice.minTargets) parts.push(`${choice.minTargets}${choice.maxTargets !== choice.minTargets ? `–${choice.maxTargets}` : ''} targets`);
   if (amountText(choice.randomBonus)) parts.push(`Plus ${amountText(choice.randomBonus)} to another random opponent`);

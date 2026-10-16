@@ -17,6 +17,12 @@ export class Punishment {
   @Column()
   amount: number;
 
+  @Column({ default: 'sips' })
+  unit: string;
+
+  @Column({ type: 'integer', nullable: true })
+  remainingAmount: number;
+
   @Column()
   punishmentType: number;
 

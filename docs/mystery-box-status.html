@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#cbd5e1">
+  <title>BronzeBrawl · Status mockup</title>
+  <style>
+    :root { color-scheme: light; --bg:#f1f5f9; --panel:#cbd5e1; --card:#e2e8f0; --ink:#17202b; --muted:#475569; --line:#64748b; }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--ink); background:#94a3b8; font:14px/1.3 system-ui,sans-serif; }
+    button { font:inherit; color:inherit; cursor:pointer; touch-action:manipulation; -webkit-tap-highlight-color:transparent; }
+    button:focus-visible, summary:focus-visible { outline:3px solid #2563eb; outline-offset:2px; }
+    button:disabled { cursor:default; }
+    svg { width:24px; height:24px; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; flex-shrink:0; }
+    .svg-library { position:absolute; width:0; height:0; overflow:hidden; }
+    h1,h2,h3,p { margin:0; }
+    .app { width:100%; max-width:480px; height:100svh; margin:auto; padding:8px; padding-top:max(8px,env(safe-area-inset-top)); padding-bottom:max(8px,env(safe-area-inset-bottom)); background:var(--bg); display:grid; grid-template-rows:32px 100px 76px 116px 146px; align-content:start; gap:8px; }
+    header { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .brand { display:flex; align-items:center; gap:6px; font-weight:800; font-size:16px; }
+    .brand svg { width:21px; }
+    .live { display:flex; gap:5px; align-items:center; font-size:12px; font-variant-numeric:tabular-nums; }
+    .live::before { content:''; width:7px; height:7px; border-radius:50%; background:#15803d; }
+    .panel { background:var(--panel); border:1px solid var(--line); border-radius:5px; }
+    .match { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .player { display:grid; grid-template-columns:82px minmax(0,1fr); align-items:center; gap:6px; padding:8px; }
+    .portrait { width:82px; height:82px; display:grid; place-items:center; border:1px solid #56697d; border-radius:3px; background:linear-gradient(155deg,#506a80,#203c54); color:#e2e8f0; }
+    .portrait { overflow:hidden; }
+    .portrait img { display:block; width:100%; height:100%; object-fit:cover; }
+    .player-name { font-size:10px; color:var(--muted); }
+    .champion { font-size:12px; font-weight:700; }
+    .kda { display:flex; align-items:center; gap:3px; font-size:14px; font-weight:700; font-variant-numeric:tabular-nums; margin-top:3px; white-space:nowrap; }
+    .rotation { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px; padding:8px; }
+    .rotation b { font-size:36px; line-height:1; font-weight:700; font-variant-numeric:tabular-nums; }
+    .rotation-info { display:flex; align-items:center; gap:5px; font-size:11px; }
+    .rotation-info svg { width:17px; height:17px; }
+    .rotation.ready { background:#dbeafe; border-color:#2563eb; }
+    .rotation.ready b { font-size:24px; }
+    .punishments { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
+    .punishment-counter { display:grid; grid-template-columns:24px auto; grid-template-rows:1fr auto; align-items:center; justify-content:center; column-gap:9px; padding:7px; background:var(--panel); border:1px solid var(--line); border-radius:5px; }
+    .punishment-counter > svg { grid-row:1 / 3; color:#9a3412; }
+    .punishment-counter output { font-size:25px; line-height:1; font-weight:700; font-variant-numeric:tabular-nums; text-align:left; }
+    .punishment-counter span { font-size:11px; text-align:left; }
+    .punishment-counter:not(:disabled):active { background:#b4c3d5; }
+    .punishment-counter:disabled { opacity:.45; }
+    .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; border:0; }
+    .button { min-height:44px; border:1px solid var(--line); border-radius:4px; padding:6px 12px; background:var(--card); display:flex; align-items:center; justify-content:center; gap:6px; }
+    .button svg { width:19px; height:19px; }
+    .button:disabled { opacity:.45; }
+    .boxes { display:flex; flex-direction:column; min-height:0; padding:7px; }
+    .section-heading { display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
+    h2 { font-size:13px; font-weight:700; }
+    .section-heading span { font-size:11px; color:var(--muted); }
+    .inventory { flex:1; min-height:0; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); grid-template-rows:1fr; gap:5px; }
+    .box-card { --accent:#475569; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; position:relative; min-width:0; min-height:0; padding:5px 2px; border:1px solid #78889c; border-radius:4px; background:var(--card); }
+    .box-card > svg { color:var(--accent); width:28px; height:28px; }
+    .box-card[data-type="revenge"] { --accent:#b45309; }
+    .box-card[data-type="support"] { --accent:#7c3aed; }
+    .box-card[data-type="objective"] { --accent:#0369a1; }
+    .box-info { display:flex; flex-direction:column; align-items:center; gap:2px; }
+    .box-name { font-size:10px; }
+    .box-count { font-size:17px; line-height:1; font-weight:700; }
+    .box-card:disabled { opacity:.4; }
+    .box-card:not(:disabled):active { background:#b4c3d5; }
+    .saved-dot { position:absolute; top:6px; right:6px; width:6px; height:6px; border-radius:50%; background:#2563eb; }
+    .progress { padding:7px 9px; }
+    .progress-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); grid-template-rows:repeat(3,minmax(0,1fr)); height:calc(100% - 25px); gap:6px 12px; margin-top:6px; }
+    .progress-label { display:grid; grid-template-columns:16px minmax(0,1fr) auto; align-items:center; gap:4px; font-size:10px; line-height:1.15; min-height:23px; margin-bottom:3px; }
+    .progress-label svg { width:16px; height:16px; }
+    .progress-label span { margin-left:auto; font-variant-numeric:tabular-nums; }
+    .progress-label .progress-name { margin-left:0; }
+    .track { height:4px; background:#acb9c9; border-radius:2px; overflow:hidden; }
+    .track span { display:block; height:100%; width:var(--value); background:var(--accent,#475569); }
+    dialog { width:calc(100% - 24px); max-width:400px; max-height:calc(100svh - 24px); padding:14px; margin:auto; border:1px solid #334155; border-radius:8px; color:var(--ink); background:var(--bg); box-shadow:0 12px 45px #0005; }
+    dialog::backdrop { background:#0f172a99; }
+    .popup-header { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+    .popup-header h2 { font-size:16px; display:flex; align-items:center; gap:7px; }
+    .icon-button { width:44px; height:44px; display:grid; place-items:center; border:1px solid var(--line); border-radius:4px; background:var(--card); }
+    .icon-button svg { width:18px; height:18px; }
+    .popup-body { margin-top:10px; }
+    .popup-chest { display:grid; place-items:center; height:104px; color:var(--accent,#475569); }
+    .popup-chest svg { width:76px; height:76px; }
+    .primary { width:100%; background:#334155; color:white; border-color:#334155; font-weight:600; }
+    .note { font-size:10px; text-align:center; color:var(--muted); margin-top:8px; }
+    .popup-label { font-size:12px; color:var(--muted); margin-bottom:10px; }
+    .choices { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .choice { min-height:100px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; padding:10px; background:var(--card); border:1px solid var(--line); border-radius:5px; }
+    .choice > svg { width:30px; height:30px; }
+    .choice strong { font-size:14px; }
+    .choice span { color:var(--muted); font-size:11px; }
+    .target-grid { display:grid; grid-template-columns:1fr 1fr; gap:7px; margin:10px 0; }
+    .target { display:flex; align-items:center; gap:8px; min-height:58px; background:var(--card); border:1px solid var(--line); border-radius:4px; text-align:left; padding:7px; }
+    .target[aria-pressed="true"] { border:2px solid #2563eb; padding:6px; background:#dbeafe; }
+    .target > svg { width:27px; height:27px; color:#475569; }
+    .target strong { display:block; font-size:12px; }
+    .target small { font-size:10px; color:var(--muted); }
+    .secondary { width:100%; margin-top:7px; background:transparent; }
+    .result { display:flex; flex-direction:column; align-items:center; gap:12px; padding:20px 0; }
+    .result > svg { width:40px; height:40px; color:#15803d; }
+    .result p { font-size:13px; text-align:center; }
+    @media (max-width:379px) { .player { gap:5px; padding:6px; } .kda { font-size:12px; gap:2px; } }
+    @media (max-width:359px) { .app { padding:6px; gap:6px; grid-template-rows:28px 90px 72px 110px 146px; } .match { gap:6px; } .player { grid-template-columns:74px minmax(0,1fr); } .portrait { width:74px; height:74px; } .rotation { padding:6px; } .rotation b { font-size:32px; } .progress-grid { column-gap:10px; } }
+    @media (max-height:540px) { .app { grid-template-rows:26px 76px 64px 106px 140px; gap:5px; padding:5px; } .player { grid-template-columns:62px minmax(0,1fr); padding:6px; } .portrait { width:62px; height:62px; } .boxes { padding:5px; } .progress-grid { gap:5px 10px; margin-top:5px; } }
+  </style>
+</head>
+<body>
+  <svg class="svg-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
+    <symbol id="i-chest" viewBox="0 0 48 48"><path d="M7 25v15h34V25M5 25h38v-8c0-6-5-10-10-10H15C10 7 5 11 5 17v8Zm8 0V16c0-5 3-9 7-9m15 18V16c0-5-3-9-7-9M13 28v12m22-12v12"/><path d="M20 22h8v10h-8zM24 26v2"/></symbol>
+    <symbol id="i-swords" viewBox="0 0 24 24"><path d="m4 3 4 1 12 15-2 2L4 7V3Zm16 0-4 1-4 5m-3 5-5 5 2 2 5-5M2 15l6 6m8-6 6 6"/></symbol>
+    <symbol id="i-revenge" viewBox="0 0 24 24"><path d="M5 8a8 8 0 1 1-1 8M5 3v5h5"/><path d="m13 7-4 6h4l-2 5 6-8h-4V7Z"/></symbol>
+    <symbol id="i-support" viewBox="0 0 24 24"><path d="M12 21 4 13C-2 6 7 1 12 7c5-6 14-1 8 6l-8 8Z"/><path d="M12 9v6m-3-3h6"/></symbol>
+    <symbol id="i-objective" viewBox="0 0 24 24"><path d="M5 21V3m0 1c6-4 8 4 15 0v10c-7 4-9-4-15 0M2 21h7"/></symbol>
+    <symbol id="i-turret" viewBox="0 0 24 24"><path d="M5 3h4v4h6V3h4v8l-2 2v8H7v-8l-2-2V3Zm2 10h10m-7 8v-5h4v5"/></symbol>
+    <symbol id="i-monster" viewBox="0 0 24 24"><path d="m5 10-3-7 8 4h4l8-4-3 7v6l-7 6-7-6v-6Zm3 2 2 1m6-1-2 1m-5 4h6"/></symbol>
+    <symbol id="i-rotate" viewBox="0 0 24 24"><path d="M20 9a8 8 0 0 0-14-4L3 8m0-6v6h6m-5 7a8 8 0 0 0 14 4l3-3m0 6v-6h-6"/></symbol>
+    <symbol id="i-cup" viewBox="0 0 24 24"><path d="m6 3 2 18h8l2-18H6Zm1 6h10m-9 4h8"/></symbol>
+    <symbol id="i-shot" viewBox="0 0 24 24"><path d="m6 7 2 14h8l2-14H6Zm1 5h10M5 7h14"/></symbol>
+    <symbol id="i-chug" viewBox="0 0 24 24"><path d="M4 4h12v17H4V4Zm12 3h3c3 0 3 10 0 10h-3M7 8v9m5-9v9M4 4V2h12v2"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+    <symbol id="i-focus" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 1v4m0 14v4M1 12h4m14 0h4"/></symbol>
+    <symbol id="i-split" viewBox="0 0 24 24"><path d="M12 21v-9m0 0L5 5m7 7 7-7M5 10V5h5m4 0h5v5"/></symbol>
+  </defs></svg>
+
+  <main class="app">
+    <header><h1 class="brand"><svg aria-hidden="true"><use href="#i-swords"/></svg>BronzeBrawl</h1><span class="live" aria-label="Live, 18 minutes 42 seconds">18:42</span></header>
+    <section class="match" aria-label="Player and champion rotation">
+      <div class="player panel"><div class="portrait"><img id="champion-portrait" src="https://static.bigbrain.gg/assets/lol/riot_static/13.24.1/img/champion/Yasuo.png" alt="Yasuo"></div><div><p class="player-name">Alex · Blue</p><p class="champion">Yasuo</p><p class="kda" aria-label="8 kills, 5 deaths, 12 assists"><span>8</span><span aria-hidden="true">/</span><span>5</span><span aria-hidden="true">/</span><span>12</span></p></div></div>
+      <div class="rotation panel" aria-label="Champion rotation"><div class="rotation-info"><svg aria-hidden="true"><use href="#i-rotate"/></svg><strong id="rotation-label">Rotate in</strong></div><b id="rotation-timer" role="timer" aria-live="off">02:18</b></div>
+    </section>
+    <section class="punishments" aria-label="Remaining punishments. Tap a counter to subtract one.">
+      <button class="punishment-counter" data-punishment="sips" aria-label="6 sips remaining. Tap to subtract one."><svg aria-hidden="true"><use href="#i-cup"/></svg><output>6</output><span>Sips</span></button>
+      <button class="punishment-counter" data-punishment="shots" aria-label="2 shots remaining. Tap to subtract one."><svg aria-hidden="true"><use href="#i-shot"/></svg><output>2</output><span>Shots</span></button>
+      <button class="punishment-counter" data-punishment="chugs" aria-label="1 chug remaining. Tap to subtract one."><svg aria-hidden="true"><use href="#i-chug"/></svg><output>1</output><span>Chugs</span></button>
+    </section>
+    <div class="sr-only" role="status" id="punishment-status"></div>
+    <section class="boxes panel" aria-labelledby="boxes-title">
+      <div class="section-heading"><h2 id="boxes-title">Chests</h2><span id="box-total" aria-live="polite">4 available</span></div>
+      <div class="inventory">
+        <button class="box-card" data-type="standard" aria-label="Open standard chest, 2 available"><svg aria-hidden="true"><use href="#i-chest"/></svg><span class="box-info"><span class="box-name">Standard</span><span class="box-count">×2</span></span></button>
+        <button class="box-card" data-type="revenge" aria-label="Open revenge chest, 1 available"><svg aria-hidden="true"><use href="#i-chest"/></svg><span class="box-info"><span class="box-name">Revenge</span><span class="box-count">×1</span></span></button>
+        <button class="box-card" data-type="support" aria-label="Open support chest, 1 available"><svg aria-hidden="true"><use href="#i-chest"/></svg><span class="box-info"><span class="box-name">Support</span><span class="box-count">×1</span></span></button>
+        <button class="box-card" data-type="objective" disabled aria-label="Objective chest, none available"><svg aria-hidden="true"><use href="#i-chest"/></svg><span class="box-info"><span class="box-name">Objective</span><span class="box-count">×0</span></span></button>
+      </div>
+    </section>
+    <section class="progress panel" aria-labelledby="progress-title">
+      <div class="section-heading"><h2 id="progress-title">Next chest</h2><span>Mockup</span></div>
+      <div class="progress-grid">
+        <div><div class="progress-label"><svg aria-hidden="true"><use href="#i-swords"/></svg><span class="progress-name">Kills</span><span>0/1</span></div><div class="track" role="progressbar" aria-label="Kills toward standard chest" aria-valuenow="0" aria-valuemin="0" aria-valuemax="1"></div></div>
+        <div><div class="progress-label"><svg aria-hidden="true"><use href="#i-turret"/></svg><span class="progress-name">Turret</span><span>0/1</span></div><div class="track" role="progressbar" aria-label="Turrets toward objective chest" aria-valuenow="0" aria-valuemin="0" aria-valuemax="1"></div></div>
+        <div><div class="progress-label"><svg aria-hidden="true"><use href="#i-support"/></svg><span class="progress-name">Assists</span><span>0/2</span></div><div class="track" role="progressbar" aria-label="Assists toward support chest" aria-valuenow="0" aria-valuemin="0" aria-valuemax="2"></div></div>
+        <div><div class="progress-label"><svg aria-hidden="true"><use href="#i-monster"/></svg><span class="progress-name">Grubs / Herald / Dragon</span><span>0/1</span></div><div class="track" role="progressbar" aria-label="Grubs, Herald, or Dragon toward objective chest" aria-valuenow="0" aria-valuemin="0" aria-valuemax="1"></div></div>
+        <div><div class="progress-label"><svg aria-hidden="true"><use href="#i-revenge"/></svg><span class="progress-name">Revenge</span><span>0/3</span></div><div class="track" role="progressbar" aria-label="Revenge chest progress" aria-valuenow="0" aria-valuemin="0" aria-valuemax="3"></div></div>
+        <div><div class="progress-label"><svg aria-hidden="true"><use href="#i-objective"/></svg><span class="progress-name">Baron / Elder</span><span>0/1</span></div><div class="track" role="progressbar" aria-label="Baron or Elder toward objective chest" aria-valuenow="0" aria-valuemin="0" aria-valuemax="1"></div></div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="box-dialog" aria-labelledby="dialog-title">
+    <div class="popup-header"><h2 id="dialog-title"></h2><button class="icon-button" id="close-dialog" aria-label="Close popup"><svg aria-hidden="true"><use href="#i-close"/></svg></button></div>
+    <div class="popup-body" id="dialog-content"></div>
+  </dialog>
+
+  <script>
+    // Demo state only. No API calls or production reward rules.
+    const boxes = {
+      standard: { name:'Standard', count:2, accent:'#475569' },
+      revenge: { name:'Revenge', count:1, accent:'#b45309' },
+      support: { name:'Support', count:1, accent:'#7c3aed' },
+      objective: { name:'Objective', count:0, accent:'#0369a1' },
+    };
+    const opponents = [
+      { name:'Sam', champion:'Jinx', icon:'focus' },
+      { name:'Jamie', champion:'Lux', icon:'support' },
+      { name:'Morgan', champion:'Thresh', icon:'revenge' },
+      { name:'Robin', champion:'Garen', icon:'swords' },
+    ];
+    const dialog = document.querySelector('#box-dialog');
+    const content = document.querySelector('#dialog-content');
+    const revealed = new Set();
+    const drafts = new Map();
+    let activeType;
+    const icon = name => `<svg aria-hidden="true"><use href="#i-${name}"/></svg>`;
+    function title(suffix='') { document.querySelector('#dialog-title').innerHTML = `${icon('chest')}${boxes[activeType].name}${suffix}`; }
+    function inventory() {
+      let total = 0;
+      for (const [type,box] of Object.entries(boxes)) {
+        const button = document.querySelector(`[data-type="${type}"]`);
+        total += box.count;
+        button.querySelector('.box-count').textContent = `×${box.count}`;
+        button.disabled = !box.count;
+        button.setAttribute('aria-label', `${revealed.has(type) ? 'Resume' : 'Open'} ${type} chest, ${box.count} available`);
+        button.querySelector('.saved-dot')?.remove();
+        if (revealed.has(type)) button.insertAdjacentHTML('beforeend','<span class="saved-dot" aria-hidden="true"></span>');
+      }
+      document.querySelector('#box-total').textContent = `${total} available`;
+    }
+    function cover() {
+      title();
+      content.innerHTML = `<div class="popup-chest" style="--accent:${boxes[activeType].accent}">${icon('chest')}</div><button class="button primary" id="reveal">Open</button><p class="note">Used only after confirmation.</p>`;
+      document.querySelector('#reveal').onclick = () => { revealed.add(activeType); inventory(); choices(); };
+    }
+    function choices() {
+      title(' · 1/2');
+      content.innerHTML = `<p class="popup-label">Choose one</p><div class="choices">
+        <button class="choice" data-choice="focus">${icon('focus')}<strong>1 × 2</strong><span>One opponent</span></button>
+        <button class="choice" data-choice="split">${icon('split')}<strong>2 × 1</strong><span>Two opponents</span></button>
+        </div><p class="note">Example options only.</p>`;
+      content.querySelectorAll('[data-choice]').forEach(button => {
+        button.onclick = () => {
+          const choice = button.dataset.choice;
+          if (drafts.get(activeType)?.choice !== choice) drafts.set(activeType,{ choice, targets:[] });
+          targets();
+        };
+      });
+    }
+    function targets() {
+      const draft = drafts.get(activeType);
+      const required = draft.choice === 'focus' ? 1 : 2;
+      title(' · 2/2');
+      content.innerHTML = `<p class="popup-label">${icon(draft.choice === 'focus' ? 'focus' : 'split').replace('<svg ', '<svg style="display:inline-block;vertical-align:middle;width:18px;height:18px" ')} ${required === 1 ? '2 to one opponent' : '1 to each opponent'}</p>
+        <div class="target-grid">${opponents.map((player,index) => `<button class="target" data-target="${index}" aria-pressed="${draft.targets.includes(index)}">${icon(player.icon)}<span><strong>${player.name}</strong><small>${player.champion}</small></span></button>`).join('')}</div>
+        <button class="button primary" id="confirm-choice"></button><button class="button secondary" id="back-choices">Back</button><p class="note">Example only · no real effect</p>`;
+      function update() {
+        content.querySelectorAll('[data-target]').forEach(button => button.setAttribute('aria-pressed', String(draft.targets.includes(Number(button.dataset.target)))));
+        const confirm = document.querySelector('#confirm-choice');
+        confirm.disabled = draft.targets.length !== required;
+        confirm.textContent = draft.targets.length === required ? 'Confirm' : `Select ${required - draft.targets.length}`;
+      }
+      content.querySelectorAll('[data-target]').forEach(button => {
+        button.onclick = () => {
+          const index = Number(button.dataset.target);
+          if (draft.targets.includes(index)) draft.targets = draft.targets.filter(value => value !== index);
+          else if (required === 1) draft.targets = [index];
+          else if (draft.targets.length < required) draft.targets.push(index);
+          update();
+        };
+      });
+      document.querySelector('#back-choices').onclick = choices;
+      document.querySelector('#confirm-choice').onclick = () => {
+        if (draft.targets.length !== required || !boxes[activeType].count) return;
+        const names = draft.targets.map(index => opponents[index].name).join(' + ');
+        boxes[activeType].count--;
+        drafts.delete(activeType);
+        revealed.delete(activeType);
+        inventory();
+        title();
+        content.innerHTML = `<div class="result">${icon('check')}<p>${names}<br><strong>${required === 1 ? '2 assigned' : '1 each assigned'}</strong></p></div><button class="button primary" id="finish">Done</button><p class="note">Demo only</p>`;
+        document.querySelector('#finish').onclick = () => dialog.close();
+      };
+      update();
+    }
+    document.querySelectorAll('[data-type]').forEach(button => {
+      button.onclick = () => {
+        activeType = button.dataset.type;
+        if (!boxes[activeType].count) return;
+        if (drafts.has(activeType)) targets();
+        else if (revealed.has(activeType)) choices();
+        else cover();
+        dialog.showModal();
+      };
+    });
+    document.querySelector('#close-dialog').onclick = () => dialog.close();
+    dialog.addEventListener('click',event => {
+      const rect = dialog.getBoundingClientRect();
+      if (event.target === dialog && (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom)) dialog.close();
+    });
+    document.querySelectorAll('[data-punishment]').forEach(button => {
+      button.onclick = () => {
+        const output = button.querySelector('output');
+        const remaining = Math.max(0, Number(output.value) - 1);
+        const unit = remaining === 1 ? button.dataset.punishment.slice(0,-1) : button.dataset.punishment;
+        output.value = remaining;
+        button.disabled = remaining === 0;
+        button.setAttribute('aria-label', `${remaining} ${unit} remaining.${remaining ? ' Tap to subtract one.' : ''}`);
+        document.querySelector('#punishment-status').textContent = `${remaining} ${unit} remaining.`;
+      };
+    });
+
+    // Same portrait source and fallback version as the app's StatusPage.
+    const portrait = document.querySelector('#champion-portrait');
+    portrait.onerror = () => {
+      portrait.onerror = null;
+      portrait.src = '../Frontend/src/Champion_Placeholder.png';
+    };
+
+    // Illustrative rotation duration, not a production game setting.
+    const rotationDeadline = performance.now() + 138000;
+    function updateRotation() {
+      const seconds = Math.max(0, Math.ceil((rotationDeadline - performance.now()) / 1000));
+      const timer = document.querySelector('#rotation-timer');
+      timer.textContent = `${String(Math.floor(seconds / 60)).padStart(2,'0')}:${String(seconds % 60).padStart(2,'0')}`;
+      if (seconds === 0) {
+        document.querySelector('.rotation').classList.add('ready');
+        document.querySelector('#rotation-label').textContent = 'Rotate now';
+        clearInterval(rotationInterval);
+      }
+    }
+    const rotationInterval = setInterval(updateRotation,250);
+    updateRotation();
+  </script>
+</body>
+</html>

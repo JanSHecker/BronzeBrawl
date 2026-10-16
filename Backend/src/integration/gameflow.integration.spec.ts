@@ -129,6 +129,29 @@ const feed = (events: any[] = [], time = 20) => ({ allPlayers: roster, events: {
     expect(await restarted.getSettings(game.gameId)).not.toHaveProperty('rotationMode');
   });
 
+  test('team objective chests and their offers survive reload and independent services', async () => {
+    const { game, a, b, teams } = await setup();
+    const teammate = await service.createPlayer({ playerName: 'audit-objective-teammate', gameCode: game.gameCode });
+    await service.joinTeam({ player: teammate.playerId, team: teams[0].teamId }, teammate.playerToken);
+    const input = feed([{ EventID: 1, EventName: 'DragonKill', KillerName: 'AuditAlice#TEST', DragonType: 'Elder' }]);
+    const other = new GameflowService(database);
+    await Promise.all([service.ingest({ gameId: game.gameId, input }, game.hostToken), other.ingest({ gameId: game.gameId, input }, game.hostToken)]);
+    for (const player of [a, teammate]) {
+      expect((await other.status(player.playerId, player.playerToken)).rewards).toMatchObject([{ chestType: 'legendary' }]);
+    }
+    expect((await other.status(b.playerId, b.playerToken)).rewards).toHaveLength(0);
+    const chest = (await service.status(a.playerId, a.playerToken)).rewards[0];
+    const offers = await Promise.all([service.openChest({ id: chest.rewardId }, a.playerToken), other.openChest({ id: chest.rewardId }, a.playerToken)]);
+    expect(offers[0]).toEqual(offers[1]);
+    await service.confirmReward({ id: chest.rewardId, choiceId: 'assign', punishment: { recipient: { playerId: b.playerId } } }, a.playerToken);
+    const punishment = (await other.status(b.playerId, b.playerToken)).punishments[0];
+    const tap = { id: punishment.punishmentId, expectedRemaining: punishment.remainingAmount };
+    const results = await Promise.allSettled([service.consumePunishment(tap, b.playerToken), other.consumePunishment(tap, b.playerToken)]);
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect((await other.status(b.playerId, b.playerToken)).punishmentTotals.sips).toBe(8);
+  });
+
+
   test('companion connection persists across services, expires and revokes atomically', async () => {
     const game = await service.runGame(settings);
     const connection = await service.connectCompanion({ gameId: game.gameId }, game.hostToken);

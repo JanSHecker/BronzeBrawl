@@ -140,6 +140,18 @@ export class AppController {
     return this.gameflowUnavailable();
   }
 
+  @Post('openChest')
+  async openChest(@Body() input, @Headers('x-player-token') token: string) {
+    if (this.gameflow) return this.gameflow.openChest(input, token);
+    return this.gameflowUnavailable();
+  }
+
+  @Post('consumePunishment')
+  async consumePunishment(@Body() input, @Headers('x-player-token') token: string) {
+    if (this.gameflow) return this.gameflow.consumePunishment(input, token);
+    return this.gameflowUnavailable();
+  }
+
   @Get('Status')
   async getStatus(@Query('playerId') playerId, @Headers('x-player-token') token: string) {
     if (this.gameflow) return this.gameflow.status(this.integerQuery(playerId, 'playerId'), token);

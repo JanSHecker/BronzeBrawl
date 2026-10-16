@@ -49,7 +49,7 @@ const router = createBrowserRouter([
 
 const Router = () => {
   return (
-    <div className="min-h-screen flex flex-col items-center justify-evenly m-4">
+    <div className="app-shell min-h-screen flex flex-col items-center justify-evenly m-4">
       <LiveFeedProvider><RouterProvider router={router} /></LiveFeedProvider>
     </div>
   );

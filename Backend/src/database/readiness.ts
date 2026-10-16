@@ -21,9 +21,9 @@ export const REQUIRED_APPLICATION_COLUMNS: Record<string, readonly string[]> = {
   ],
   team: ['teamId', 'teamName', 'gameGameId'],
   champion: ['championId', 'championName', 'summonerName', 'teamTeamId', 'riotId', 'riotIdGameName', 'riotIdTagLine', 'rotationEndsAtGameTime'],
-  player: ['playerId', 'playerName', 'teamTeamId', 'gameGameId', 'championChampionId', 'playerTokenHash'],
-  punishment: ['punishmentId', 'amount', 'punishmentType', 'recieved', 'playerPlayerId', 'distributorPlayerId'],
-  reward: ['rewardId', 'amount', 'rewardType', 'distributed', 'playerPlayerId'],
+  player: ['playerId', 'playerName', 'teamTeamId', 'gameGameId', 'championChampionId', 'playerTokenHash', 'chestProgress'],
+  punishment: ['punishmentId', 'amount', 'punishmentType', 'recieved', 'playerPlayerId', 'distributorPlayerId', 'unit', 'remainingAmount'],
+  reward: ['rewardId', 'amount', 'rewardType', 'distributed', 'playerPlayerId', 'chestType', 'openedAt', 'choices', 'sourceEventId'],
   takedown: ['takedownId', 'multiKill', 'shutdown', 'killerChampionId', 'killedChampionId', 'punishmentPunishmentId', 'rewardRewardId'],
   event: ['eventId', 'ingameId', 'eventType', 'gameGameId', 'takedownTakedownId', 'rewardRewardId', 'payload'],
   activity_log: ['activityId', 'gameId', 'type', 'recordedAt', 'gameTime', 'data'],
@@ -65,6 +65,7 @@ export const REQUIRED_MIGRATIONS = [
   { name: 'ChampionRotationTimer1792300000000', timestamp: 1792300000000 },
   { name: 'TimeOnlyRotation1792400000000', timestamp: 1792400000000 },
   { name: 'ActivityLog1792500000000', timestamp: 1792500000000 },
+  { name: 'MysteryBoxes1792600000000', timestamp: 1792600000000 },
 ] as const;
 
 export type DatabaseReadiness =

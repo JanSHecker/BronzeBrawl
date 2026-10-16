@@ -122,16 +122,23 @@ test("two isolated players complete the secured gameflow and recover after failu
     await upload();
     await upload(); // JSONB replay through HTTP must not duplicate consequences.
     await expect(blue.getByText("1/0/0", { exact: true })).toBeVisible();
-    await expect(red.getByText("You were killed! Drink 7.", { exact: true })).toBeVisible();
+    await expect(red.getByRole('button', { name: '7 sips remaining. Tap to subtract one.' })).toBeVisible();
     await blue.route("**/api/Status?*", route => route.fulfill({ status: 503, contentType: "application/json", body: '{"message":"synthetic transient failure"}' }), { times: 1 });
     await expect(blue.getByRole("alert")).toContainText("synthetic transient failure");
     await expect(blue.getByRole("alert")).toHaveCount(0);
-    await blue.getByRole("button").filter({ has: blue.getByRole("img", { name: "Garen", exact: true }) }).click();
-    await expect(blue.getByText("You currently have no Rewards!")).toBeVisible();
-    await red.getByRole("button", { name: "Done" }).click();
-    await expect(red.getByText(/punishment from Audit Alex\. Drink 9/)).toBeVisible();
-    await red.getByRole("button", { name: "Done" }).click();
-    await expect(red.getByText("You haven't received any punishments.")).toBeVisible();
+    await blue.getByRole('button', { name: 'Kills chest, 1 available' }).click();
+    await blue.getByRole('button', { name: 'Open', exact: true }).click();
+    await blue.getByRole('button', { name: '9 Assign sips' }).click();
+    await blue.getByRole('button', { name: /Audit Alex Garen/ }).click();
+    await blue.getByRole('button', { name: 'Confirm', exact: true }).click();
+    await blue.getByRole('button', { name: 'Done', exact: true }).click();
+    await expect(blue.getByRole('button', { name: 'Kills chest, 0 available' })).toBeDisabled();
+    for (let remaining = 16; remaining > 0; remaining--) {
+      const counter = red.getByRole('button', { name: `${remaining} sips remaining. Tap to subtract one.` });
+      await expect(counter).toBeEnabled();
+      await counter.click();
+    }
+    await expect(red.getByRole('button', { name: '0 sips remaining. Tap to subtract one.' })).toBeDisabled();
     events.push(kill(2));
     await upload();
     await expect(blue).toHaveURL(/\/status$/);

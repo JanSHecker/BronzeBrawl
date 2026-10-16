@@ -21,6 +21,9 @@ export class Player {
   @Column()
   playerName: string;
 
+  @Column({ type: 'jsonb', default: {} })
+  chestProgress: Record<string, number>;
+
   @Column({ nullable: true })
   playerTokenHash: string;
 

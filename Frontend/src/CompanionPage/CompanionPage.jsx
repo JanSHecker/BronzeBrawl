@@ -42,7 +42,7 @@ function ConnectionControls({ gameId }) {
 
 export default function CompanionPage() {
   const { gameId, status, message } = useLiveFeed();
-  return <main className="max-w-2xl p-4" lang="de">
+  return <main className="utility-page max-w-2xl p-4" lang="de">
     <a className="underline" href="/">Zur Haupt-App</a>
     <h1 className="text-2xl font-bold my-4">Companion</h1>
     <p>{message}</p>
@@ -51,7 +51,7 @@ export default function CompanionPage() {
     <ol className="list-decimal ml-5 my-4">
       <li><a className="underline" href="/downloads/bronze-brawl-companion.zip" download>Companion herunterladen (.zip)</a>, entpacken und Python 3.11 oder neuer installieren.</li>
       <li><code>start.cmd</code> auf dem LoL-PC öffnen.</li>
-      <li>Hier ein Spiel erstellen und den Verbindungscode im Companion mit <code>v</code> hinterlegen.</li>
+      <li><a href="/host" className="underline">Ein Spiel erstellen</a> und den Verbindungscode im Companion mit <code>v</code> hinterlegen.</li>
     </ol>
     {gameId && <ConnectionControls key={gameId} gameId={gameId} />}
     <p>Der Companion liest LoL alle drei Sekunden und sendet direkt per HTTPS an den Server. Kein localhost-Zugriff und keine Netzwerkfreigabe im Browser nötig.</p>

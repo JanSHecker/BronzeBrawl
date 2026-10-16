@@ -32,12 +32,12 @@ export default function LogPage() {
   const gameId = Number(search.get("gameId") ?? getGameId());
   const playerId = Number(getPlayerId()) || undefined;
   const hostToken = getHostCapability(gameId);
-  return <main className="w-full max-w-2xl flex flex-col gap-4">
+  return <main className="utility-page w-full max-w-2xl flex flex-col gap-4">
     <h1 className="text-2xl font-bold">Game event log</h1>
     <p>Test view for the reusable activity log. Newest events appear first.</p>
     {!validId(gameId) || !hostToken && !playerId
       ? <p>Create or join a game in this browser tab, then open /log.</p>
       : <GameHistory key={`${gameId}:${playerId}:${hostToken}`} gameId={gameId} playerId={playerId} hostToken={hostToken} />}
-    <Link to="/" className="underline">Back to game creation</Link>
+    <Link to="/host" className="underline">Back to game creation</Link>
   </main>;
 }

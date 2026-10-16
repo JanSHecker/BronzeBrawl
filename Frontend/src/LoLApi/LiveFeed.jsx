@@ -45,6 +45,6 @@ export function LiveFeedProvider({ children }) {
     : "Companion verbunden – noch keine aktuellen Spieldaten am Server.";
   return <FeedContext.Provider value={{ gameId, status: current, message }}>
     {children}
-    {gameId && <p role="status" data-testid="live-feed-status" className={`m-2 rounded border p-3 text-sm ${!error && current?.connected ? "border-green-700 bg-green-100 text-green-950" : "border-amber-700 bg-amber-100 text-amber-950"}`}>{message}</p>}
+    {gameId && <p role="status" data-testid="live-feed-status" className={`feed-status m-2 rounded border p-3 text-sm${!error && current?.connected ? " feed-status-connected" : ""}`}>{message}</p>}
   </FeedContext.Provider>;
 }

@@ -135,11 +135,11 @@ test("a player response for another game cannot replace the active session", asy
   expect(readActiveSession()).toEqual({ gameId: 99, playerId: 100 });
 });
 
-test("home offers manual join and preserves a host's code across reloads", () => {
+test("the dedicated host page preserves a host's code across reloads", () => {
   writeActiveSession({ gameId: 7, gameCode: "KFRW" });
   sessionStorage.setItem(hostTokenKey(7), "b".repeat(64));
   mount(<CreationPage />);
-  expect(screen.getByRole("heading", { name: "Join a game" })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Join a game" })).not.toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "Host a game" })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: `${window.location.origin}/name/KFRW` })).toHaveAttribute("href", `${window.location.origin}/name/KFRW`);
   expect(http.get).not.toHaveBeenCalled();

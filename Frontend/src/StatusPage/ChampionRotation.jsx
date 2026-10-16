@@ -6,7 +6,7 @@ const ChampionRotation = ({ rotationRemainingSeconds, rotationAvailable, navigat
   useEffect(() => {
     if (!ended && available) navigate("/champion", { replace: true });
   }, [available, ended, navigate]);
-  return <div className="flex flex-col text-center justify-evenly border border-black rounded p-1 bg-slate-300">
+  return <div className="status-rotation flex flex-col text-center justify-evenly border border-black rounded p-1 bg-slate-300">
     <h1 className="text-3xl">{formatRotationTime(rotationRemainingSeconds)}</h1>
     <h3 className="text-sm">Time until you have to pick a new Champion!</h3>
   </div>;

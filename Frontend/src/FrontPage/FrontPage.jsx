@@ -1,24 +1,22 @@
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import NameForm from "./NameForm";
 import { normalizeGameCode, validGameCode } from "../api";
-import icon from "../bronzeIcon150.png";
+import EntryPage from "../components/EntryPage";
 
 const FrontPage = () => {
   const { parameter } = useParams();
-  const gameCode = normalizeGameCode(parameter);
-  if (!validGameCode(gameCode)) return <>
+  const gameCode = parameter === undefined ? undefined : normalizeGameCode(parameter);
+  if (gameCode !== undefined && !validGameCode(gameCode)) return <EntryPage>
     <p role="alert">Invalid invitation. Game codes contain four letters.</p>
-    <a href="/" className="underline">Enter a game code</a>
-  </>;
+    <Link to="/join" className="underline">Enter a game code</Link>
+  </EntryPage>;
   return (
-    <>
-      <img
-        src={icon}
-        alt="bronze brawl with icon"
-        className="mb-8 max-w-full h-auto"
-      />
-      <NameForm key={gameCode} gameCode={gameCode} />
-    </>
+    <EntryPage>
+      <section className="entry-panel join-panel" aria-labelledby="join-title">
+        <div className="entry-heading"><h1 id="join-title">Join a game</h1><p>Your team is waiting.</p></div>
+        <NameForm key={gameCode || 'manual'} gameCode={gameCode} />
+      </section>
+    </EntryPage>
   );
 };
 export default FrontPage;

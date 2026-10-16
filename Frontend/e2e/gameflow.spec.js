@@ -61,6 +61,7 @@ test("two isolated players complete the secured gameflow and recover after failu
   };
   await watch(page);
   await page.goto("/");
+  await page.getByRole("link", { name: "Host", exact: true }).click();
   const inputs = page.locator("form").filter({ has: page.getByRole("button", { name: "CREATE", exact: true }) }).getByRole("textbox");
   await inputs.nth(0).fill("7");
   await inputs.nth(1).fill("9");

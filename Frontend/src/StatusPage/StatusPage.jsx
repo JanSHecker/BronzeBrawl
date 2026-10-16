@@ -11,6 +11,7 @@ import ChestProgress from './ChestProgress';
 import StatusIcon from './StatusIcon';
 import ChampionRotation from "./ChampionRotation";
 import './status.css';
+import BronzeLogo from '../components/BronzeLogo';
 
 const StatusPage = () => {
   const navigate = useNavigate();
@@ -32,7 +33,7 @@ const StatusPage = () => {
   const { error, retry, refresh } = usePolling(fetchStatus);
   const version = localStorage.getItem(GAME_VERSION_KEY) || DEFAULT_GAME_VERSION;
   return <div className="game-status">
-    <header className="status-header"><h1><StatusIcon name="kills" />BronzeBrawl</h1>
+    <header className="status-header"><h1><BronzeLogo compact decorative />BronzeBrawl</h1>
       {status && <p role="status" className="status-live">{status.gameState === 'ended' ? 'Game ended' : status.feedStale ? 'Waiting for data…' : 'Live'}</p>}
     </header>
     {error && <p className="status-poll-error" role="alert">{error} <button onClick={retry}>Retry</button></p>}

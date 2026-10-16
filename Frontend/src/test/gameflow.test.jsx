@@ -95,7 +95,7 @@ test("duplicate names do not grant team membership and semantic IDs determine co
   mount(<TeamSelectionPage />);
   await screen.findByText("Alex");
   expect(screen.getByRole("button", { name: "READY" })).toBeDisabled();
-  expect(screen.getByText("Team Blue").closest("section")).toHaveClass("bg-cyan-500");
+  expect(screen.getByText("Team Blue").closest("section")).toHaveClass("team-panel-blue");
 });
 
 test("champion selection awaits the commit and recovers after an occupied conflict", async () => {

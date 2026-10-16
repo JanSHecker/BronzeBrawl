@@ -5,6 +5,7 @@ import Team from "./Team";
 import api, { getGameId, getPlayerId } from "../api";
 import { usePolling } from "../useRequest";
 import title from "../PickYourTeam.png";
+import SelectionTitle from "../components/SelectionTitle";
 
 const TeamSelectionPage = () => {
   const [roster, setRoster] = useState({ teams: [], players: { blue: [], red: [] } });
@@ -29,7 +30,7 @@ const TeamSelectionPage = () => {
   });
   const member = memberOf(roster);
   return <>
-    <img src={title} alt="pick your team" />
+    <SelectionTitle src={title} alt="pick your team" />
     {error && <p role="alert">{error} <button onClick={retry}>Retry</button></p>}
     <div className="grid grid-cols-2 w-full">
       {[0, 1].map(color => <Team key={color} teamInfo={roster.teams.find(team => team.teamName === color)}

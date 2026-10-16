@@ -38,9 +38,9 @@ function gameClock(seconds) {
 export default function EventLog({ items = [] }) {
   if (!items.length) return <p>No activity yet.</p>;
   return <ol aria-label="Game activity" className="flex flex-col gap-2">
-    {items.map(item => <li key={item.activityId} className="border border-slate-400 rounded p-2">
+    {items.map(item => <li key={item.activityId} className="activity-event border rounded p-2">
       <p>{activityMessage(item)}</p>
-      <div className="flex gap-3 text-sm text-slate-600">
+      <div className="flex gap-3 text-sm text-muted">
         {item.gameTime !== null && <span aria-label="In-game time">{gameClock(item.gameTime)}</span>}
         <time dateTime={item.recordedAt}>{new Date(item.recordedAt).toLocaleString()}</time>
       </div>

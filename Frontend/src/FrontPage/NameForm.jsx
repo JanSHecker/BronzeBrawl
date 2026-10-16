@@ -34,17 +34,17 @@ const NameForm = ({ gameCode }) => {
       navigate("/team");
     });
   };
-  return <form onSubmit={submit}>
-    <div className="form-control w-full max-w-xs p-4">
+  return <form className="entry-form" onSubmit={submit}>
+    <div className="form-control">
       <label htmlFor="game-code">Game code</label>
-      <Input id="game-code" type="text" value={gameCode ?? code} readOnly={gameCode !== undefined} disabled={loading} onChange={event => setCode(event.target.value)} autoCapitalize="characters" autoComplete="off" spellCheck={false} placeholder="KFRW" className="bg-white uppercase" />
-      <p className="text-sm">Four letters from your host.</p>
+      <Input id="game-code" type="text" value={gameCode ?? code} readOnly={gameCode !== undefined} disabled={loading} onChange={event => setCode(event.target.value)} autoCapitalize="characters" autoComplete="off" spellCheck={false} placeholder="KFRW" className="entry-game-code" />
+      <p className="field-help">Four letters from your host.</p>
     </div>
-    <div className="form-control w-full max-w-xs p-4">
+    <div className="form-control">
       <label htmlFor="name">What is your name?</label>
-      <Input id="name" type="text" value={name} disabled={loading} onChange={event => setName(event.target.value)} className="bg-white" />
+      <Input id="name" type="text" value={name} disabled={loading} onChange={event => setName(event.target.value)} autoComplete="given-name" />
     </div>
-    <Button disabled={loading || !validGameCode(targetCode) || !name.trim()} type="submit" color="primary" wide="true" className="m-8">START</Button>
+    <Button disabled={loading || !validGameCode(targetCode) || !name.trim()} type="submit" color="primary" className="entry-action">START</Button>
     {error && <p role="alert">{error}</p>}
   </form>;
 };

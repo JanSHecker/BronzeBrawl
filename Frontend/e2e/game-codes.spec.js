@@ -65,6 +65,9 @@ test("two tabs sharing localStorage join their own invitation and retain separat
 test("players can join from the home page using a spoken code", async ({ context, page }) => {
   const { joins } = await fixture(context);
   await page.goto("/");
+  await expect(page.locator('form')).toHaveCount(0);
+  await page.getByRole('link', { name: 'Join', exact: true }).click();
+  await expect(page).toHaveURL(/\/join$/);
   await page.getByLabel("Game code", { exact: true }).fill(" kfrw ");
   await page.getByLabel("What is your name?").fill("Alice");
   await page.getByRole("button", { name: "START", exact: true }).click();
@@ -75,6 +78,8 @@ test("players can join from the home page using a spoken code", async ({ context
 test("hosts see a four-letter code and optional link, including after reload", async ({ context, page }) => {
   await fixture(context);
   await page.goto("/");
+  await page.getByRole('link', { name: 'Host', exact: true }).click();
+  await expect(page).toHaveURL(/\/host$/);
   const form = page.locator("form").filter({ has: page.getByRole("button", { name: "CREATE", exact: true }) });
   for (const input of await form.getByRole("textbox").all()) await input.fill("3");
   await page.getByRole("button", { name: "CREATE", exact: true }).click();

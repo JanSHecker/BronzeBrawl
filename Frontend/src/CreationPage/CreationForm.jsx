@@ -26,24 +26,24 @@ const CreationForm = ({ setGame }) => {
       .catch(() => {});
   });
   const numeric = setter => event => setter(event.target.value.replace(/[^0-9]/g, ""));
-  return <form onSubmit={event => { event.preventDefault(); submit(); }}>
-    <div className="flex flex-col w-full component-preview p-2 items-center justify-center gap-2 font-sans">
-      <div className="form-control w-full max-w-xs">
+  return <form className="entry-form host-form" onSubmit={event => { event.preventDefault(); submit(); }}>
+    <div className="host-amounts">
+      <div className="form-control">
         <label htmlFor="punishmentAmount">Amount per Punishment</label>
-        <Input id="punishmentAmount" type="text" value={punishmentAmount} onChange={numeric(setPunishmentAmount)} />
+        <Input id="punishmentAmount" type="text" inputMode="numeric" value={punishmentAmount} onChange={numeric(setPunishmentAmount)} />
       </div>
-      <div className="form-control w-full max-w-xs">
+      <div className="form-control">
         <label htmlFor="rewardAmount">Legacy reward amount</label>
-        <Input id="rewardAmount" type="text" value={rewardAmount} onChange={numeric(setRewardAmount)} />
+        <Input id="rewardAmount" type="text" inputMode="numeric" value={rewardAmount} onChange={numeric(setRewardAmount)} />
       </div>
-      <div className="form-control w-full max-w-xs"><label htmlFor="difficulty">Reward difficulty</label>
-        <select id="difficulty" className="select select-bordered" value={difficulty} onChange={event => setDifficulty(event.target.value)}>
-          <option value="easy">Easy · 0.5×</option><option value="baseline">Baseline · 1×</option><option value="hard">Hard · 1.5×</option><option value="terror">Terror · 2×</option>
-        </select>
-      </div>
-      <p className="text-sm max-w-xs">Each champion starts with 3 minutes. When time runs out, you must select a different free champion. Chest rewards use the configured catalogue and difficulty.</p>
     </div>
-    <Button disabled={loading} type="submit" wide="true" color="primary" className="m-8 border border-black text-black">CREATE</Button>
+    <div className="form-control"><label htmlFor="difficulty">Reward difficulty</label>
+      <select id="difficulty" className="select select-bordered" value={difficulty} onChange={event => setDifficulty(event.target.value)}>
+        <option value="easy">Easy · 0.5×</option><option value="baseline">Baseline · 1×</option><option value="hard">Hard · 1.5×</option><option value="terror">Terror · 2×</option>
+      </select>
+    </div>
+    <details className="entry-help"><summary>How it works</summary><p>Each champion starts with 3 minutes. When time runs out, you must select a different free champion. Chest rewards use the configured catalogue and difficulty.</p></details>
+    <Button disabled={loading} type="submit" color="primary" className="entry-action">CREATE</Button>
     {error && <p role="alert">{error}</p>}
   </form>;
 };

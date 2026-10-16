@@ -40,7 +40,7 @@ test('empty waiting teams render safely; duplicate name does not grant READY', a
 });
 test('membership uses ID, resets when removed and team uses explicit name', async()=>{
   vi.useFakeTimers(); axios.get.mockResolvedValueOnce({data:{players:{blue:[{playerId:42,playerName:'Alex'}],red:[]},teams:[{teamId:8,teamName:1},{teamId:2,teamName:0}]}}).mockResolvedValue({data:{players:{blue:[],red:[]},teams:[{teamId:8,teamName:1},{teamId:2,teamName:0}]}});
-  render(<TeamSelectionPage/>); await act(async()=>{}); expect(screen.getByRole('button',{name:'READY'})).toBeEnabled(); expect(screen.getByText('Team Blue').closest('.bg-cyan-500')).toHaveClass('bg-cyan-500');
+  render(<TeamSelectionPage/>); await act(async()=>{}); expect(screen.getByRole('button',{name:'READY'})).toBeEnabled(); expect(screen.getByText('Team Blue').closest('section')).toHaveClass('team-panel-blue');
   await act(async()=>vi.advanceTimersByTime(1100)); expect(screen.getByRole('button',{name:'READY'})).toBeDisabled();
 });
 test('champion pool uses explicit team ID not parity', async()=>{

@@ -7,11 +7,11 @@ const Linkbox = ({ gameCode }) => {
   const link = inviteUrl(gameCode);
   const [copied, setCopied] = useState(false);
   const { run, loading, error } = useAction();
-  return <div className="flex flex-col gap-2 border rounded border-black p-2 w-full max-w-xs bg-slate-400 text-center">
+  return <div className="invitation">
     {link ? <>
-      <p>Game code: <strong className="text-3xl tracking-widest">{gameCode}</strong></p>
-      <a className="text-blue-600 break-all" href={link}>{link}</a>
-      <Button disabled={loading} onClick={() => run(async () => { await navigator.clipboard.writeText(link); setCopied(true); })}>{copied ? "Copied!" : "Copy Link"}</Button>
+      <div className="invitation-heading"><p>Game code: <strong>{gameCode}</strong></p>
+      <Button size="sm" disabled={loading} onClick={() => run(async () => { await navigator.clipboard.writeText(link); setCopied(true); })}>{copied ? "Copied!" : "Copy Link"}</Button></div>
+      <a className="invitation-link" href={link}>{link}</a>
       {error && <p role="alert">{error}</p>}
     </> : <p>Create a game to receive a game code and invitation link.</p>}
   </div>;

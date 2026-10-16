@@ -1,4 +1,5 @@
 import FrontPage from "./FrontPage/FrontPage";
+import HomePage from "./FrontPage/HomePage";
 import TeamSelectionPage from "./TeamSelectionPage/TeamSelectionPage";
 import ChampionSelectionPage from "./ChampionSelectionPage/ChampionSelectionPage";
 import StatusPage from "./StatusPage/StatusPage";
@@ -23,6 +24,14 @@ const router = createBrowserRouter([
   },
   {
     path: "/",
+    element: <HomePage />,
+  },
+  {
+    path: "/join",
+    element: <FrontPage />,
+  },
+  {
+    path: "/host",
     element: <CreationPage />,
   },
   {
